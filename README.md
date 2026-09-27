@@ -52,6 +52,13 @@ The response already contains the branch graph needed to identify edited user me
 
 When AppShell already renders valid native response arrows, the extension leaves them in place. It supplies matching arrows when the native controls are missing and removes false version controls when the visible graph contains only one real response.
 
+Edited **user messages in AppShell** also show numbered version buttons between
+the previous/next arrows. Click a number to jump directly to that version through
+the same native branch switcher. The current version is highlighted; long lists
+scroll horizontally. Buttons remain disabled while a switch is pending, and the
+existing accessible count/error announcement is preserved. Assistant response
+controls and the classic client's native controls are unchanged.
+
 ### Classic client
 
 The classic client uses ChatGPT's original version-arrow components. The extension restores them by normalizing the relevant bootstrap configuration before the frontend reads it.
@@ -196,6 +203,14 @@ After the matching config is normalized, the classic frontend renders and operat
 `app-shell-pagination.js` is loaded on every matching ChatGPT page, but it renders and switches version controls only after detecting the AppShell client. It captures the exact `/backend-api/conversations/batch` response, combines that graph with the corresponding live AppScope state, and reconciles the controls with the current message action rows.
 
 The adapter uses ChatGPT's native branch-switching function.
+
+## Development tests
+
+Install the test-only dependency with `npm install`, then install a test browser
+with `npx playwright install chromium` and run `npm test` (Node.js 20 or newer).
+Alternatively, set `BROWSER_EXECUTABLE` to an installed Chrome or Edge executable.
+Tests launch a separate headless browser with synthetic conversations; they do
+not connect to a logged-in profile or make requests to ChatGPT.
 
 ## Known Limits
 

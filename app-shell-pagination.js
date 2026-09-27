@@ -612,12 +612,14 @@
       previous: "Предыдущая версия",
       next: "Следующая версия",
       group: "Версии сообщения",
+      version: (number) => `Перейти к версии ${number}`,
       failed: "Не удалось переключить версию сообщения.",
     }
     : {
       previous: "Previous version",
       next: "Next version",
       group: "Message versions",
+      version: (number) => `Go to version ${number}`,
       failed: "Could not switch the message version.",
     };
 
@@ -688,15 +690,16 @@
     }
   };
 
-  const switchVersion = async (bubble, direction) => {
+  const switchVersion = async (bubble, { direction = 0, targetMessageId = null } = {}) => {
     const context = readContext(bubble);
     if (!context || pendingConversations.has(context.conversationId)) return;
     const graph = graphFor(context);
     if (!graph || !hydrateGraph(context, graph)) return;
     const ids = userVariants(graph, context.messageId);
     const index = ids.indexOf(context.messageId);
-    const target = index < 0 ? null : ids[index + direction];
-    if (!target) return;
+    const target = index < 0 ? null : targetMessageId ?? ids[index + direction];
+    // Revalidate against the current graph, not a possibly stale button index.
+    if (!target || target === context.messageId || !ids.includes(target)) return;
     await requestSwitch(context, context.messageId, target, labels().failed);
   };
 
@@ -718,23 +721,28 @@
       const previous = createButton(text.previous, -1, (event) => {
         event.preventDefault();
         event.stopPropagation();
-        void switchVersion(bubble, -1);
+        void switchVersion(controls.paginationBubble, { direction: -1 });
       });
       const counter = document.createElement("span");
       counter.setAttribute("aria-live", "polite");
       counter.setAttribute("aria-atomic", "true");
+      counter.setAttribute("data-batch-version-status", "");
+      const numbers = document.createElement("span");
+      numbers.setAttribute("data-batch-version-numbers", "");
       const next = createButton(text.next, 1, (event) => {
         event.preventDefault();
         event.stopPropagation();
-        void switchVersion(bubble, 1);
+        void switchVersion(controls.paginationBubble, { direction: 1 });
       });
-      controls.append(previous, counter, next);
+      controls.append(previous, counter, numbers, next);
     }
+    // React can reuse the action row while replacing the message bubble.
+    controls.paginationBubble = bubble;
     controls.dataset.pass = String(currentPass);
     controls.dataset.conversationId = context.conversationId;
     controls.dataset.messageId = context.messageId;
     if (controls.parentElement !== mount) mount.append(controls);
-    const [previous, counter, next] = controls.children;
+    const [previous, counter, numbers, next] = controls.children;
     const caption = `${index + 1}/${ids.length}`;
     if (counter.textContent !== caption) counter.textContent = caption;
     const busy = pendingConversations.has(context.conversationId);
@@ -744,6 +752,38 @@
     const error = conversationErrors.get(context.conversationId) ?? "";
     controls.title = error;
     counter.setAttribute("aria-label", error ? `${caption}. ${error}` : caption);
+    while (numbers.children.length > ids.length) numbers.lastElementChild.remove();
+    while (numbers.children.length < ids.length) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void switchVersion(controls.paginationBubble, { targetMessageId: button.dataset.versionId });
+      });
+      numbers.append(button);
+    }
+    const text = labels();
+    for (const [number, button] of [...numbers.children].entries()) {
+      const caption = String(number + 1);
+      if (button.textContent !== caption) button.textContent = caption;
+      button.dataset.versionId = ids[number];
+      button.setAttribute("aria-label", text.version(number + 1));
+      button.title = text.version(number + 1);
+      button.disabled = busy;
+      if (number === index) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+    // Keep the selected number visible without moving the conversation viewport
+    // or undoing a user's horizontal scroll on every reconciliation pass.
+    if (numbers.dataset.selectedMessageId !== context.messageId) {
+      numbers.dataset.selectedMessageId = context.messageId;
+      const selected = numbers.children[index];
+      if (selected.offsetLeft < numbers.scrollLeft) numbers.scrollLeft = selected.offsetLeft;
+      else if (selected.offsetLeft + selected.offsetWidth > numbers.scrollLeft + numbers.clientWidth) {
+        numbers.scrollLeft = selected.offsetLeft + selected.offsetWidth - numbers.clientWidth;
+      }
+    }
     return true;
   };
 
@@ -1174,9 +1214,12 @@
       isBatchResponse,
       mergeMappings,
       mutationMatters,
+      paintAssistantPagination,
+      paintUserPagination,
       readContext,
       runtimeUrls,
       scanSwitcher,
+      switchVersion,
       userVariants,
     };
   }
