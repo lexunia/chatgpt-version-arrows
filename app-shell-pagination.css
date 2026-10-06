@@ -55,7 +55,7 @@ html[data-codex-window-type] .turn-action-controls button[aria-label="Просм
 }
 
 [data-message-model-info] {
-  color: var(--color-text-secondary, currentColor);
+  color: var(--color-codex-description, var(--color-text-tertiary, currentColor));
   direction: ltr;
   font-size: var(--app-menu-item-font-size, var(--text-sm, 0.875rem));
   line-height: var(--app-menu-item-line-height, var(--text-sm--line-height, 1.25rem));
