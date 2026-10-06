@@ -65,7 +65,3 @@ html[data-codex-window-type] .turn-action-controls button[aria-label="Просм
   text-align: start;
   user-select: text;
 }
-
-[data-message-model-info] span {
-  display: block;
-}

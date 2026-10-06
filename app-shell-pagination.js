@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3 Beta 1";
+  const VERSION = "0.6.3 Beta 2";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -887,6 +887,55 @@
     return { modelSlug, effort: text(metadata.thinking_effort) };
   };
 
+  const modelCaptionFor = (info, scope) => {
+    const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+    const effortKey = (value) => {
+      const effort = text(value);
+      return effort === "none" ? null : effort;
+    };
+    const join = (model, label) => !label || model.toLowerCase().endsWith(` ${label.toLowerCase()}`) ||
+      model.toLowerCase() === label.toLowerCase() ? model : `${model} ${label}`;
+    const effort = effortKey(info.effort);
+    let modelTitle = null;
+    let effortLabel = null;
+    try {
+      // Read the client's existing Chat/Work catalogs; never fetch another catalog.
+      const client = scope?.queryClient ?? scope?.node?.queryClient;
+      const queries = client?.getQueryCache?.()?.getAll?.();
+      for (const query of Array.isArray(queries) ? queries : []) {
+        const catalog = query.state?.data;
+        if (!catalog || typeof catalog !== "object") continue;
+        const groups = [catalog, ...(Array.isArray(catalog.versionOptions) ? catalog.versionOptions : [])];
+        for (const group of groups) {
+          for (const option of Array.isArray(group?.options) ? group.options : []) {
+            if (option?.slug !== info.modelSlug || effortKey(option.thinkingEffort) !== effort) continue;
+            const model = text(option.selectedDisplayVersion);
+            const label = text(option.selectedLabel);
+            if (model && label) return join(model, label);
+          }
+        }
+        const config = catalog.modelConfigBySlug?.[info.modelSlug];
+        modelTitle ??= text(config?.title)?.replace(/^GPT[-\s]?/i, "");
+        const levels = config?.thinkingEfforts;
+        const level = Array.isArray(levels) ? levels.find((entry) => effortKey(entry?.thinking_effort) === effort) : null;
+        effortLabel ??= text(level?.short_label);
+      }
+    } catch {
+      // A missing or changed catalog must not break the native menu or invent a mode.
+    }
+    if (!modelTitle) {
+      const match = /^gpt-(\d+(?:[.-]\d+)*)(?:[-.](.+))?$/i.exec(info.modelSlug);
+      if (match) {
+        const version = match[1].replaceAll("-", ".");
+        const name = (match[2] ?? "").replace(/(?:^|-)wm$/i, "").split("-")
+          .filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+        modelTitle = join(version, name);
+      } else modelTitle = info.modelSlug;
+    }
+    if (effortLabel) return join(modelTitle, effortLabel);
+    return effort ? `${modelTitle} (${effort})` : modelTitle;
+  };
+
   const assistantMessageForMenu = (menu) => {
     const triggerId = menu.getAttribute("aria-labelledby");
     const trigger = triggerId ? document.getElementById(triggerId) : null;
@@ -917,18 +966,13 @@
         row = document.createElement("div");
         row.setAttribute("data-message-model-info", "");
         row.setAttribute("role", "note");
-        const model = document.createElement("span");
-        const effort = document.createElement("span");
-        row.append(model, effort);
         // Preserve the native date and actions, including their React handlers.
         menu.insertBefore(row, menu.children[1] ?? null);
       }
       row.dataset.conversationId = graph.conversationId;
       row.dataset.messageId = context.messageId;
-      const [model, effort] = row.children;
-      if (model.textContent !== info.modelSlug) model.textContent = info.modelSlug;
-      const effortText = info.effort ? `Effort: ${info.effort}` : "Instant";
-      if (effort.textContent !== effortText) effort.textContent = effortText;
+      const caption = modelCaptionFor(info, context.scope);
+      if (row.textContent !== caption) row.textContent = caption;
     }
   };
 
@@ -1544,6 +1588,7 @@
       mergeMappings,
       mutationMatters,
       modelInfoFor,
+      modelCaptionFor,
       readContext,
       reconcileModelInfoMenus,
       runtimeUrls,
