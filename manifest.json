@@ -2,12 +2,12 @@
   "manifest_version": 3,
   "name": "ChatGPT Version Arrows",
   "version": "0.6.2",
-  "version_name": "0.6.2",
+  "version_name": "0.6.2 Alpha 3",
   "description": "Restores previous/next version arrows for edited messages and regenerated responses.",
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*"],
-      "js": ["patch.js", "app-shell-pagination.js"],
+      "js": ["patch.js", "app-shell-pagination.js", "work-mode-edit.js"],
       "css": ["app-shell-pagination.css"],
       "run_at": "document_start",
       "world": "MAIN"
