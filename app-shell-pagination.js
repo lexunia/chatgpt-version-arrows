@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3 Beta 2";
+  const VERSION = "0.6.3 Beta 3";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -971,7 +971,7 @@
       }
       row.dataset.conversationId = graph.conversationId;
       row.dataset.messageId = context.messageId;
-      const caption = modelCaptionFor(info, context.scope);
+      const caption = `GPT ${modelCaptionFor(info, context.scope).replace(/^GPT[-\s]+/i, "")}`;
       if (row.textContent !== caption) row.textContent = caption;
     }
   };
