@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.2";
+  const VERSION = "0.6.3 Beta 1";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -10,6 +10,8 @@
   const SHELL_ATTRIBUTE = "data-codex-window-type";
   const USER_BUBBLE = "[data-user-message-bubble]";
   const ASSISTANT_MESSAGE = "[data-chatgpt-selection-message-id]";
+  const MORE_ACTIONS_BUTTON = 'button[aria-label="More actions"], button[aria-label="Ещё действия"]';
+  const MODEL_INFO = "[data-message-model-info]";
   const CONTROLS = "[data-batch-edit-pagination]";
   const ASSISTANT_CONTROLS = "[data-batch-assistant-pagination]";
   const NATIVE_VERSIONS_BUTTON = [
@@ -873,6 +875,63 @@
     return null;
   };
 
+  const modelInfoFor = (context, graph) => {
+    if (!ownsGraph(context, graph)) return null;
+    const saved = graph.batchMapping?.[context.messageId]?.message;
+    const live = graph.liveMapping?.[context.messageId]?.message;
+    if ((live ?? saved)?.author?.role !== "assistant") return null;
+    const metadata = { ...saved?.metadata, ...live?.metadata };
+    const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+    const modelSlug = text(metadata.model_slug) ?? text(metadata.resolved_model_slug);
+    if (!modelSlug) return null;
+    return { modelSlug, effort: text(metadata.thinking_effort) };
+  };
+
+  const assistantMessageForMenu = (menu) => {
+    const triggerId = menu.getAttribute("aria-labelledby");
+    const trigger = triggerId ? document.getElementById(triggerId) : null;
+    if (!trigger?.matches(MORE_ACTIONS_BUTTON) || trigger.getAttribute("aria-expanded") !== "true" ||
+        (trigger.hasAttribute("aria-controls") && trigger.getAttribute("aria-controls") !== menu.id)) return null;
+    const row = trigger.closest(".turn-action-controls");
+    if (!row) return null;
+    let element = row.parentElement;
+    for (let depth = 0; element && depth < 10; depth++, element = element.parentElement) {
+      const messages = element.querySelectorAll(ASSISTANT_MESSAGE);
+      if (messages.length === 1 && assistantActionRowFor(messages[0]) === row) return messages[0];
+    }
+    return null;
+  };
+
+  const reconcileModelInfoMenus = () => {
+    for (const menu of document.querySelectorAll('[role="menu"][aria-labelledby]')) {
+      const message = assistantMessageForMenu(menu);
+      const context = message ? readContext(message) : null;
+      const graph = context ? graphFor(context) : null;
+      const info = context ? modelInfoFor(context, graph) : null;
+      let row = menu.querySelector(MODEL_INFO);
+      if (!info) {
+        row?.remove();
+        continue;
+      }
+      if (!row) {
+        row = document.createElement("div");
+        row.setAttribute("data-message-model-info", "");
+        row.setAttribute("role", "note");
+        const model = document.createElement("span");
+        const effort = document.createElement("span");
+        row.append(model, effort);
+        // Preserve the native date and actions, including their React handlers.
+        menu.insertBefore(row, menu.children[1] ?? null);
+      }
+      row.dataset.conversationId = graph.conversationId;
+      row.dataset.messageId = context.messageId;
+      const [model, effort] = row.children;
+      if (model.textContent !== info.modelSlug) model.textContent = info.modelSlug;
+      const effortText = info.effort ? `Effort: ${info.effort}` : "Instant";
+      if (effort.textContent !== effortText) effort.textContent = effortText;
+    }
+  };
+
   const nativeAssistantPaginationFor = (row) => {
     if (!row) return null;
     const previousButtons = row.querySelectorAll(
@@ -891,7 +950,7 @@
   };
 
   const assistantPaginationMount = (row) => {
-    const more = row.querySelector('button[aria-label="More actions"], button[aria-label="Ещё действия"]');
+    const more = row.querySelector(MORE_ACTIONS_BUTTON);
     if (!more) return { mount: row, insertionPoint: null };
     let rowChild = more;
     while (rowChild.parentElement && rowChild.parentElement !== row) rowChild = rowChild.parentElement;
@@ -1318,6 +1377,7 @@
     const currentPass = ++pass;
     if (!isShell()) {
       for (const controls of document.querySelectorAll(CONTROLS)) controls.remove();
+      for (const info of document.querySelectorAll(MODEL_INFO)) info.remove();
       releaseActivityWatches(currentPass);
       releaseNativeButtons(currentPass);
       return;
@@ -1339,6 +1399,7 @@
       if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) painted++;
     }
     const assistantPainted = reconcileAssistantPagination(currentPass);
+    reconcileModelInfoMenus();
     releaseActivityWatches(currentPass);
     releaseNativeButtons(currentPass);
     for (const controls of document.querySelectorAll(CONTROLS)) {
@@ -1355,11 +1416,14 @@
   }
 
   const mutationMatters = (mutation) => {
+    if (mutation.target?.nodeType === 1 && mutation.target.closest?.(MODEL_INFO)) return false;
     if (mutation.type === "attributes") return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(".turn-action-controls")) return true;
+    if (mutation.target?.nodeType === 1 && mutation.target.closest?.('[role="menu"]')) return true;
     const relevant = (node) => node.nodeType === 1 &&
       (node.matches?.(USER_BUBBLE) || node.querySelector?.(USER_BUBBLE) ||
        node.matches?.(".turn-action-controls") || node.querySelector?.(".turn-action-controls") ||
+       node.matches?.('[role="menu"]') || node.querySelector?.('[role="menu"]') ||
        node.matches?.('link[rel="modulepreload"]'));
     return [...mutation.addedNodes, ...mutation.removedNodes].some(relevant);
   };
@@ -1375,7 +1439,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: [SHELL_ATTRIBUTE, "data-user-message-bubble"],
+      attributeFilter: [SHELL_ATTRIBUTE, "data-user-message-bubble", "data-chatgpt-selection-message-id", "aria-expanded", "aria-labelledby"],
     });
     if (isShell() && !runtime) void discoverRuntime();
     schedule();
@@ -1479,7 +1543,9 @@
       wrapHistoryLoader,
       mergeMappings,
       mutationMatters,
+      modelInfoFor,
       readContext,
+      reconcileModelInfoMenus,
       runtimeUrls,
       scanSwitcher,
       setActivityAdapter: (adapter) => { activityAdapter = adapter; schedule(); },

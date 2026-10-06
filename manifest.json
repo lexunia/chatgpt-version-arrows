@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Version Arrows",
-  "version": "0.6.2",
-  "version_name": "0.6.2",
+  "version": "0.6.3",
+  "version_name": "0.6.3 Beta 1",
   "description": "Restores previous/next version arrows for edited messages and regenerated responses.",
   "content_scripts": [
     {
