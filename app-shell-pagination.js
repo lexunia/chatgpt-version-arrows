@@ -63,6 +63,7 @@
   let pass = 0;
   let graphRevision = 0;
   let historyRegistration = null;
+  let workIntegration = null;
 
   const record = (type, details = {}) => {
     if (!diagnostics) return;
@@ -357,10 +358,10 @@
     return null;
   };
 
-  const readContext = (message) => {
+  const readContext = (message, requestedItemType = null) => {
     if (diagnostics) diagnostics.contextScans++;
     const assistantId = message.getAttribute("data-chatgpt-selection-message-id");
-    const itemType = message.matches(USER_BUBBLE) ? "user-message" : "assistant-message";
+    const itemType = requestedItemType ?? (message.matches(USER_BUBBLE) ? "user-message" : "assistant-message");
     const key = getFiber(message);
     let fiber = currentFiber(key ? message[key] : null);
     let scope = null;
@@ -1251,6 +1252,7 @@
     runtime = candidate;
     scanConversationIdentity();
     installFullHistory(candidate);
+    workIntegration?.attachRuntime(candidate);
     if (diagnostics) record("runtime-found", { cacheSize: Object.keys(runtime.c).length });
     scanSwitcher();
     return true;
@@ -1347,6 +1349,7 @@
     if (diagnostics) record("render", { bubbleCount: bubbles.length, painted, assistantPainted, graphCount: graphs.size });
     if (bubbles.length && graphs.size && !runtime) void discoverRuntime();
     else if (runtime && (!switcher || !activityAdapter)) scanSwitcher();
+    workIntegration?.reconcile();
   };
 
   function schedule() {
@@ -1449,6 +1452,7 @@
     rootObserver?.disconnect();
     releaseActivityWatches(-1);
     releaseNativeButtons(-1);
+    workIntegration?.stop();
     if (historyRegistration && historyRegistration.candidate.C === historyRegistration.register) {
       historyRegistration.candidate.C = historyRegistration.original;
     }
@@ -1486,4 +1490,24 @@
       userVariants,
     };
   }
+  // One-shot functional integration, not diagnostics: the experimental Work
+  // module shares our ownership/busy checks instead of maintaining another graph.
+  Object.defineProperty(globalThis, "__chatgptVersionArrowsConnectWork", {
+    configurable: true,
+    value(connect) {
+      if (workIntegration || typeof connect !== "function") return false;
+      const integration = connect(Object.freeze({
+        readUserContext: (element) => readContext(element, "user-message"),
+        conversationKey,
+        conversationBusy,
+        schedule,
+      }));
+      if (!["attachRuntime", "reconcile", "stop"].every((name) => typeof integration?.[name] === "function")) return false;
+      workIntegration = integration;
+      if (runtime) workIntegration?.attachRuntime(runtime);
+      delete globalThis.__chatgptVersionArrowsConnectWork;
+      schedule();
+      return true;
+    },
+  });
 })();
