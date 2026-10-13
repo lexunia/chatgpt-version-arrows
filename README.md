@@ -10,6 +10,9 @@ Restores the previous/next version arrows for edited messages and regenerated re
   >
 </p>
 
+> [!IMPORTANT]
+> **AppShell remembers your selected branch.** Switching versions uses the client’s native navigation, which saves the selected branch on the server even without sending a message. Unlike in the classic client, this selection persists when you reopen the chat or use another device. Before leaving, switch back to the branch you want to keep active.
+
 ## Download and Install
 
 1. On this GitHub page, click the **Code** button above the file list.
