@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.2";
+  const VERSION = "0.6.3";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1149,7 +1149,7 @@
   const wrapHistoryLoader = (original) => {
     if (historyLoaders.has(original)) return historyLoaders.get(original);
     const wrapped = function fullHistoryLoader(scope, conversationId, options) {
-      if (!isShell() || options === null || options?.isTemporaryChat === true) {
+      if (!isShell() || options === null) {
         return Reflect.apply(original, this, arguments);
       }
       const args = [...arguments];
