@@ -48,9 +48,7 @@
   display: none !important;
 }
 
-html[data-codex-window-type] .turn-action-controls button[aria-label="See versions"],
-html[data-codex-window-type] .turn-action-controls button[aria-label="Посмотреть версии"],
-html[data-codex-window-type] .turn-action-controls button[aria-label="Просмотреть версии"] {
+html[data-codex-window-type] .turn-action-controls button[data-batch-native-action="versions"] {
   display: none !important;
 }
 

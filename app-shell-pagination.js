@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3";
+  const VERSION = "0.6.3 Beta 2";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -10,15 +10,17 @@
   const SHELL_ATTRIBUTE = "data-codex-window-type";
   const USER_BUBBLE = "[data-user-message-bubble]";
   const ASSISTANT_MESSAGE = "[data-chatgpt-selection-message-id]";
-  const MORE_ACTIONS_BUTTON = 'button[aria-label="More actions"], button[aria-label="Ещё действия"]';
   const MODEL_INFO = "[data-message-model-info]";
   const CONTROLS = "[data-batch-edit-pagination]";
   const ASSISTANT_CONTROLS = "[data-batch-assistant-pagination]";
-  const NATIVE_VERSIONS_BUTTON = [
-    'button[aria-label="See versions"]',
-    'button[aria-label="Посмотреть версии"]',
-    'button[aria-label="Просмотреть версии"]',
-  ].join(", ");
+  const CLIENT_MESSAGES = {
+    previous: { id: "chatgpt.versions.previous", defaultMessage: "Previous version" },
+    next: { id: "chatgpt.versions.next", defaultMessage: "Next version" },
+    group: { id: "chatgpt.versions.title", defaultMessage: "Versions" },
+    previousResponse: { id: "chatgptConversations.regenerate.previous", defaultMessage: "Previous response" },
+    nextResponse: { id: "chatgptConversations.regenerate.next", defaultMessage: "Next response" },
+    failed: { id: "chatgptConversations.regenerate.selectFailed", defaultMessage: "Failed to switch response" },
+  };
   const RUNTIME_HINT = /^\/cdn\/assets\/633146\.[a-z0-9]+\.js$/;
   const MAX_GRAPHS = 3;
   const MAX_EVENTS = 500;
@@ -348,6 +350,70 @@
     if (leftRoot !== rightRoot && activeRoot === rightRoot) return alternate;
     return fiber;
   };
+
+  const nativePropsFor = (element) => {
+    const propsKey = Object.getOwnPropertyNames(element).find((name) => name.startsWith("__reactProps$"));
+    if (propsKey) return element[propsKey];
+    const fiberKey = getFiber(element);
+    return currentFiber(fiberKey ? element[fiberKey] : null)?.memoizedProps;
+  };
+
+  const intlFor = (element) => {
+    // A ProseMirror editor or injected control may sit below a React-owned host.
+    for (let host = element, hostDepth = 0; host && hostDepth < 8; host = host.parentElement, hostDepth++) {
+      const key = getFiber(host);
+      if (!key) continue;
+      let fiber = currentFiber(host[key]);
+      for (let depth = 0; fiber && depth < 100; depth++, fiber = fiber.return) {
+        const intl = fiber.memoizedProps?.value;
+        if (typeof intl?.formatMessage === "function") return intl;
+        for (let context = fiber.dependencies?.firstContext; context; context = context.next) {
+          if (typeof context.memoizedValue?.formatMessage === "function") return context.memoizedValue;
+        }
+      }
+    }
+    return null;
+  };
+
+  const clientText = (element, descriptor) => {
+    const intl = intlFor(element);
+    if (intl) {
+      try {
+        const value = intl.formatMessage(descriptor);
+        if (typeof value === "string" && value && value !== descriptor.id) return value;
+      } catch { /* Use the native default while the locale provider is unavailable. */ }
+    }
+    return descriptor.defaultMessage;
+  };
+
+  const hasMessageId = (value, id, depth = 0) => {
+    if (!value || depth > 8) return false;
+    if (Array.isArray(value)) return value.some((entry) => hasMessageId(entry, id, depth + 1));
+    if (typeof value !== "object") return false;
+    return value.props?.id === id || hasMessageId(value.props?.children, id, depth + 1);
+  };
+
+  const nativeActionFor = (button) => {
+    if (button.closest(CONTROLS)) return null;
+    const icons = [...button.querySelectorAll("use")].map((use) =>
+      (use.getAttribute("href") ?? use.getAttribute("xlink:href") ?? "").split("#").pop());
+    if (icons.some((id) => id.startsWith("ellipsis-horizontal-"))) return "more";
+    if (icons.some((id) => id.startsWith("arrows-clockwise-rotate-"))) return "regenerate";
+    if (icons.some((id) => id.startsWith("chevron-left-"))) return "previous";
+    if (icons.some((id) => id.startsWith("chevron-right-"))) return "next";
+    const props = nativePropsFor(button);
+    const source = typeof props?.onClick === "function" ? Function.prototype.toString.call(props.onClick) : "";
+    if (hasMessageId(props?.children, "chatgpt.versions.open") ||
+        (source.includes("usesVersionsEndpoint:") && source.includes("messageId:"))) return "versions";
+    if ((source.includes('action:"edit"') && source.includes('surface:"user_message"')) ||
+        (source.includes("renderFormat:") && source.includes("message:"))) return "edit";
+    if (hasMessageId(props?.children, "codex.userMessage.sendEditedMessage") ||
+        (button.type === "submit" && button.closest("form")?.querySelector('textarea, [contenteditable="true"]'))) return "send-edit";
+    return null;
+  };
+
+  const nativeButtonFor = (root, action) => [...root.querySelectorAll("button")]
+    .find((button) => nativeActionFor(button) === action) ?? null;
 
   const isScope = (value) => value && typeof value === "object" &&
     value.scope?.__scopeBrand === "AppScope" && typeof value.get === "function";
@@ -698,39 +764,24 @@
     return null;
   };
 
-  const labels = () => document.documentElement.lang.toLowerCase().startsWith("ru")
-    ? {
-      previous: "Предыдущая версия",
-      next: "Следующая версия",
-      group: "Версии сообщения",
-      failed: "Не удалось переключить версию сообщения.",
-    }
-    : {
-      previous: "Previous version",
-      next: "Next version",
-      group: "Message versions",
-      failed: "Could not switch the message version.",
-    };
+  const labels = (element, assistant = false) => ({
+    previous: clientText(element, assistant ? CLIENT_MESSAGES.previousResponse : CLIENT_MESSAGES.previous),
+    next: clientText(element, assistant ? CLIENT_MESSAGES.nextResponse : CLIENT_MESSAGES.next),
+    group: clientText(element, CLIENT_MESSAGES.group),
+  });
 
-  const assistantLabels = () => document.documentElement.lang.toLowerCase().startsWith("ru")
-    ? {
-      previous: "Предыдущий ответ",
-      next: "Следующий ответ",
-      group: "Версии ответа",
-      failed: "Не удалось переключить версию ответа.",
+  const updateControlLabels = (controls, element, assistant = false) => {
+    const text = labels(element, assistant);
+    if (controls.getAttribute("aria-label") !== text.group) controls.setAttribute("aria-label", text.group);
+    for (const [button, label] of [[controls.firstElementChild, text.previous], [controls.lastElementChild, text.next]]) {
+      if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
     }
-    : {
-      previous: "Previous response",
-      next: "Next response",
-      group: "Response versions",
-      failed: "Could not switch the response version.",
-    };
+  };
 
   const createButton = (label, direction, action) => {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("aria-label", label);
-    button.title = label;
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 16 16");
     svg.setAttribute("fill", "none");
@@ -747,7 +798,7 @@
     return button;
   };
 
-  const requestSwitch = async (context, currentMessageId, targetMessageId, failureMessage) => {
+  const requestSwitch = async (context, currentMessageId, targetMessageId, element) => {
     if (!switcher) {
       await discoverRuntime();
       scanSwitcher();
@@ -774,7 +825,8 @@
       await switcher(context.scope, context.conversationId, targetMessageId);
       if (diagnostics) record("switch-completed", { conversationId: context.conversationId, targetMessageId });
     } catch (error) {
-      conversationErrors.set(conversationId, failureMessage);
+      const failureMessage = clientText(element, CLIENT_MESSAGES.failed);
+      conversationErrors.set(conversationId, CLIENT_MESSAGES.failed);
       if (diagnostics) record("switch-failed", { conversationId: context.conversationId, targetMessageId, error: String(error) });
       warnOnce("switch-failed", failureMessage, { error: String(error) });
     } finally {
@@ -793,11 +845,12 @@
     const index = ids.indexOf(context.messageId);
     const target = index < 0 ? null : ids[index + direction];
     if (!target) return;
-    await requestSwitch(context, context.messageId, target, labels().failed);
+    await requestSwitch(context, context.messageId, target, bubble);
   };
 
   const retainBusyControls = (controls, message, context, currentPass, busy) => {
     if (!busy || !controls || controls.dataset.conversationId !== conversationKey(context)) return false;
+    updateControlLabels(controls, message, controls.matches(ASSISTANT_CONTROLS));
     controlMessages.set(controls, message);
     controls.dataset.messageId = context.messageId;
     controls.dataset.pass = String(currentPass);
@@ -817,7 +870,7 @@
       return false;
     }
     if (!controls) {
-      const text = labels();
+      const text = labels(bubble);
       controls = document.createElement("span");
       controls.setAttribute("data-batch-edit-pagination", "");
       controls.setAttribute("role", "group");
@@ -843,19 +896,22 @@
     controls.dataset.messageId = context.messageId;
     if (controls.parentElement !== mount) mount.append(controls);
     const [previous, counter, next] = controls.children;
+    updateControlLabels(controls, bubble);
     const caption = `${index + 1}/${ids.length}`;
     if (counter.textContent !== caption) counter.textContent = caption;
     previous.disabled = busy || index === 0;
     next.disabled = busy || index === ids.length - 1;
     controls.setAttribute("aria-busy", String(busy));
-    const error = conversationErrors.get(graph.conversationId) ?? "";
-    controls.title = error;
+    const descriptor = conversationErrors.get(graph.conversationId);
+    const error = descriptor ? clientText(bubble, descriptor) : "";
     counter.setAttribute("aria-label", error ? `${caption}. ${error}` : caption);
     return true;
   };
 
   const suppressNativeVersions = (root, details = {}) => {
-    for (const button of root.querySelectorAll(NATIVE_VERSIONS_BUTTON)) {
+    for (const button of root.querySelectorAll("button")) {
+      if (nativeActionFor(button) !== "versions") continue;
+      button.setAttribute("data-batch-native-action", "versions");
       if (!button.hasAttribute("data-batch-pagination-suppressed")) {
         button.setAttribute("data-batch-pagination-suppressed", "");
         if (diagnostics) record("native-versions-suppressed", details);
@@ -868,9 +924,7 @@
     for (let depth = 0; element && depth < 10; depth++, element = element.parentElement) {
       if (element.querySelectorAll(ASSISTANT_MESSAGE).length !== 1) continue;
       for (const row of element.querySelectorAll(".turn-action-controls")) {
-        if (row.querySelector(
-          'button[aria-label="Regenerate response"], button[aria-label="Сгенерировать ответ заново"]',
-        )) return row;
+        if (nativeButtonFor(row, "regenerate")) return row;
       }
     }
     return null;
@@ -940,7 +994,7 @@
   const assistantMessageForMenu = (menu) => {
     const triggerId = menu.getAttribute("aria-labelledby");
     const trigger = triggerId ? document.getElementById(triggerId) : null;
-    if (!trigger?.matches(MORE_ACTIONS_BUTTON) || trigger.getAttribute("aria-expanded") !== "true" ||
+    if (!trigger || nativeActionFor(trigger) !== "more" || trigger.getAttribute("aria-expanded") !== "true" ||
         (trigger.hasAttribute("aria-controls") && trigger.getAttribute("aria-controls") !== menu.id)) return null;
     const row = trigger.closest(".turn-action-controls");
     if (!row) return null;
@@ -979,12 +1033,9 @@
 
   const nativeAssistantPaginationFor = (row) => {
     if (!row) return null;
-    const previousButtons = row.querySelectorAll(
-      'button[aria-label="Previous response"], button[aria-label="Предыдущий ответ"]',
-    );
-    const nextButtons = [...row.querySelectorAll(
-      'button[aria-label="Next response"], button[aria-label="Следующий ответ"]',
-    )];
+    const buttons = [...row.querySelectorAll("button")];
+    const previousButtons = buttons.filter((button) => nativeActionFor(button) === "previous");
+    const nextButtons = buttons.filter((button) => nativeActionFor(button) === "next");
     for (const previous of previousButtons) {
       const wrapper = previous.parentElement;
       if (!wrapper || wrapper.matches(ASSISTANT_CONTROLS)) continue;
@@ -995,7 +1046,7 @@
   };
 
   const assistantPaginationMount = (row) => {
-    const more = row.querySelector(MORE_ACTIONS_BUTTON);
+    const more = nativeButtonFor(row, "more");
     if (!more) return { mount: row, insertionPoint: null };
     let rowChild = more;
     while (rowChild.parentElement && rowChild.parentElement !== row) rowChild = rowChild.parentElement;
@@ -1023,7 +1074,7 @@
     const index = ids.indexOf(messageId);
     const target = index < 0 ? null : ids[index + direction];
     if (!target) return;
-    await requestSwitch(context, messageId, target, assistantLabels().failed);
+    await requestSwitch(context, messageId, target, message);
   };
 
   const paintAssistantPagination = (message, context, graph, row, currentPass, busy) => {
@@ -1059,7 +1110,7 @@
       return false;
     }
     if (!controls) {
-      const text = assistantLabels();
+      const text = labels(message, true);
       controls = document.createElement("span");
       controls.setAttribute("data-batch-edit-pagination", "");
       controls.setAttribute("data-batch-assistant-pagination", "");
@@ -1089,13 +1140,14 @@
       mount.insertBefore(controls, insertionPoint);
     }
     const [previous, counter, next] = controls.children;
+    updateControlLabels(controls, message, true);
     const caption = `${index + 1}/${ids.length}`;
     if (counter.textContent !== caption) counter.textContent = caption;
     previous.disabled = busy || index === 0;
     next.disabled = busy || index === ids.length - 1;
     controls.setAttribute("aria-busy", String(busy));
-    const error = conversationErrors.get(graph.conversationId) ?? "";
-    controls.title = error;
+    const descriptor = conversationErrors.get(graph.conversationId);
+    const error = descriptor ? clientText(message, descriptor) : "";
     counter.setAttribute("aria-label", error ? `${caption}. ${error}` : caption);
     return true;
   };
@@ -1594,10 +1646,8 @@
       if (!native) return;
       const busyButtons = new Set();
       for (const button of document.querySelectorAll("button")) {
-        const label = button.getAttribute("aria-label");
-        const isEdit = ["Edit message", "Редактировать сообщение", "Изменить сообщение"].includes(label);
-        const isSend = ["Send", "Отправить"].includes(button.textContent?.trim());
-        if (!isEdit && !isSend) continue;
+        const action = nativeActionFor(button);
+        if (action !== "edit" && action !== "send-edit") continue;
         const context = buttonContext(button);
         if (!context) continue;
         if (!guardedButtons.has(button)) {
@@ -1754,6 +1804,7 @@
 
   const mutationMatters = (mutation) => {
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(MODEL_INFO)) return false;
+    if (mutation.type === "attributes" && mutation.target?.closest?.(CONTROLS)) return false;
     if (mutation.type === "attributes") return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(".turn-action-controls")) return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.('[role="menu"]')) return true;
@@ -1776,7 +1827,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: [SHELL_ATTRIBUTE, "data-user-message-bubble", "data-chatgpt-selection-message-id", "aria-expanded", "aria-labelledby"],
+      attributeFilter: [SHELL_ATTRIBUTE, "lang", "data-user-message-bubble", "data-chatgpt-selection-message-id", "aria-label", "aria-expanded", "aria-labelledby"],
     });
     if (isShell() && !runtime) void discoverRuntime();
     schedule();
@@ -1875,6 +1926,12 @@
       conversationBusy,
       createGraphState,
       currentFiber,
+      clientText,
+      intlFor,
+      nativeActionFor,
+      nativeAssistantPaginationFor,
+      suppressNativeVersions,
+      updateControlLabels,
       graphFor,
       graphSummary,
       getGraphSummaryRuns: () => diagnostics.graphSummaries,
