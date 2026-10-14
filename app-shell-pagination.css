@@ -53,3 +53,15 @@ html[data-codex-window-type] .turn-action-controls button[aria-label="Посмо
 html[data-codex-window-type] .turn-action-controls button[aria-label="Просмотреть версии"] {
   display: none !important;
 }
+
+[data-message-model-info] {
+  color: var(--color-codex-description, var(--color-text-tertiary, currentColor));
+  direction: ltr;
+  font-size: var(--app-menu-item-font-size, var(--text-sm, 0.875rem));
+  line-height: var(--app-menu-item-line-height, var(--text-sm--line-height, 1.25rem));
+  max-width: 30rem;
+  overflow-wrap: anywhere;
+  padding: var(--app-menu-item-padding, var(--padding-row-y, 0.375rem) var(--padding-row-x, 0.5rem));
+  text-align: start;
+  user-select: text;
+}

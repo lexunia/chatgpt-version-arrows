@@ -10,6 +10,8 @@
   const SHELL_ATTRIBUTE = "data-codex-window-type";
   const USER_BUBBLE = "[data-user-message-bubble]";
   const ASSISTANT_MESSAGE = "[data-chatgpt-selection-message-id]";
+  const MORE_ACTIONS_BUTTON = 'button[aria-label="More actions"], button[aria-label="Ещё действия"]';
+  const MODEL_INFO = "[data-message-model-info]";
   const CONTROLS = "[data-batch-edit-pagination]";
   const ASSISTANT_CONTROLS = "[data-batch-assistant-pagination]";
   const NATIVE_VERSIONS_BUTTON = [
@@ -874,6 +876,107 @@
     return null;
   };
 
+  const modelInfoFor = (context, graph) => {
+    if (!ownsGraph(context, graph)) return null;
+    const saved = graph.batchMapping?.[context.messageId]?.message;
+    const live = graph.liveMapping?.[context.messageId]?.message;
+    if ((live ?? saved)?.author?.role !== "assistant") return null;
+    const metadata = { ...saved?.metadata, ...live?.metadata };
+    const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+    const modelSlug = text(metadata.model_slug) ?? text(metadata.resolved_model_slug);
+    if (!modelSlug) return null;
+    return { modelSlug, effort: text(metadata.thinking_effort) };
+  };
+
+  const modelCaptionFor = (info, scope) => {
+    const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+    const effortKey = (value) => {
+      const effort = text(value);
+      return effort === "none" ? null : effort;
+    };
+    const join = (model, label) => !label || model.toLowerCase().endsWith(` ${label.toLowerCase()}`) ||
+      model.toLowerCase() === label.toLowerCase() ? model : `${model} ${label}`;
+    const effort = effortKey(info.effort);
+    let modelTitle = null;
+    let effortLabel = null;
+    try {
+      // Read the client's existing Chat/Work catalogs; never fetch another catalog.
+      const client = scope?.queryClient ?? scope?.node?.queryClient;
+      const queries = client?.getQueryCache?.()?.getAll?.();
+      for (const query of Array.isArray(queries) ? queries : []) {
+        const catalog = query.state?.data;
+        if (!catalog || typeof catalog !== "object") continue;
+        const groups = [catalog, ...(Array.isArray(catalog.versionOptions) ? catalog.versionOptions : [])];
+        for (const group of groups) {
+          for (const option of Array.isArray(group?.options) ? group.options : []) {
+            if (option?.slug !== info.modelSlug || effortKey(option.thinkingEffort) !== effort) continue;
+            const model = text(option.selectedDisplayVersion);
+            const label = text(option.selectedLabel);
+            if (model && label) return join(model, label);
+          }
+        }
+        const config = catalog.modelConfigBySlug?.[info.modelSlug];
+        modelTitle ??= text(config?.title)?.replace(/^GPT[-\s]?/i, "");
+        const levels = config?.thinkingEfforts;
+        const level = Array.isArray(levels) ? levels.find((entry) => effortKey(entry?.thinking_effort) === effort) : null;
+        effortLabel ??= text(level?.short_label);
+      }
+    } catch {
+      // A missing or changed catalog must not break the native menu or invent a mode.
+    }
+    if (!modelTitle) {
+      const match = /^gpt-(\d+(?:[.-]\d+)*)(?:[-.](.+))?$/i.exec(info.modelSlug);
+      if (match) {
+        const version = match[1].replaceAll("-", ".");
+        const name = (match[2] ?? "").replace(/(?:^|-)wm$/i, "").split("-")
+          .filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+        modelTitle = join(version, name);
+      } else modelTitle = info.modelSlug;
+    }
+    if (effortLabel) return join(modelTitle, effortLabel);
+    return effort ? `${modelTitle} (${effort})` : modelTitle;
+  };
+
+  const assistantMessageForMenu = (menu) => {
+    const triggerId = menu.getAttribute("aria-labelledby");
+    const trigger = triggerId ? document.getElementById(triggerId) : null;
+    if (!trigger?.matches(MORE_ACTIONS_BUTTON) || trigger.getAttribute("aria-expanded") !== "true" ||
+        (trigger.hasAttribute("aria-controls") && trigger.getAttribute("aria-controls") !== menu.id)) return null;
+    const row = trigger.closest(".turn-action-controls");
+    if (!row) return null;
+    let element = row.parentElement;
+    for (let depth = 0; element && depth < 10; depth++, element = element.parentElement) {
+      const messages = element.querySelectorAll(ASSISTANT_MESSAGE);
+      if (messages.length === 1 && assistantActionRowFor(messages[0]) === row) return messages[0];
+    }
+    return null;
+  };
+
+  const reconcileModelInfoMenus = () => {
+    for (const menu of document.querySelectorAll('[role="menu"][aria-labelledby]')) {
+      const message = assistantMessageForMenu(menu);
+      const context = message ? readContext(message) : null;
+      const graph = context ? graphFor(context) : null;
+      const info = context ? modelInfoFor(context, graph) : null;
+      let row = menu.querySelector(MODEL_INFO);
+      if (!info) {
+        row?.remove();
+        continue;
+      }
+      if (!row) {
+        row = document.createElement("div");
+        row.setAttribute("data-message-model-info", "");
+        row.setAttribute("role", "note");
+        // Preserve the native date and actions, including their React handlers.
+        menu.insertBefore(row, menu.children[1] ?? null);
+      }
+      row.dataset.conversationId = graph.conversationId;
+      row.dataset.messageId = context.messageId;
+      const caption = `GPT-${modelCaptionFor(info, context.scope).replace(/^GPT[-\s]+/i, "")}`;
+      if (row.textContent !== caption) row.textContent = caption;
+    }
+  };
+
   const nativeAssistantPaginationFor = (row) => {
     if (!row) return null;
     const previousButtons = row.querySelectorAll(
@@ -892,7 +995,7 @@
   };
 
   const assistantPaginationMount = (row) => {
-    const more = row.querySelector('button[aria-label="More actions"], button[aria-label="Ещё действия"]');
+    const more = row.querySelector(MORE_ACTIONS_BUTTON);
     if (!more) return { mount: row, insertionPoint: null };
     let rowChild = more;
     while (rowChild.parentElement && rowChild.parentElement !== row) rowChild = rowChild.parentElement;
@@ -1320,6 +1423,7 @@
     const currentPass = ++pass;
     if (!isShell()) {
       for (const controls of document.querySelectorAll(CONTROLS)) controls.remove();
+      for (const info of document.querySelectorAll(MODEL_INFO)) info.remove();
       releaseActivityWatches(currentPass);
       releaseNativeButtons(currentPass);
       return;
@@ -1341,6 +1445,7 @@
       if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) painted++;
     }
     const assistantPainted = reconcileAssistantPagination(currentPass);
+    reconcileModelInfoMenus();
     releaseActivityWatches(currentPass);
     releaseNativeButtons(currentPass);
     for (const controls of document.querySelectorAll(CONTROLS)) {
@@ -1358,11 +1463,14 @@
   }
 
   const mutationMatters = (mutation) => {
+    if (mutation.target?.nodeType === 1 && mutation.target.closest?.(MODEL_INFO)) return false;
     if (mutation.type === "attributes") return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(".turn-action-controls")) return true;
+    if (mutation.target?.nodeType === 1 && mutation.target.closest?.('[role="menu"]')) return true;
     const relevant = (node) => node.nodeType === 1 &&
       (node.matches?.(USER_BUBBLE) || node.querySelector?.(USER_BUBBLE) ||
        node.matches?.(".turn-action-controls") || node.querySelector?.(".turn-action-controls") ||
+       node.matches?.('[role="menu"]') || node.querySelector?.('[role="menu"]') ||
        node.matches?.('link[rel="modulepreload"]'));
     return [...mutation.addedNodes, ...mutation.removedNodes].some(relevant);
   };
@@ -1378,7 +1486,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: [SHELL_ATTRIBUTE, "data-user-message-bubble"],
+      attributeFilter: [SHELL_ATTRIBUTE, "data-user-message-bubble", "data-chatgpt-selection-message-id", "aria-expanded", "aria-labelledby"],
     });
     if (isShell() && !runtime) void discoverRuntime();
     schedule();
@@ -1483,7 +1591,10 @@
       wrapHistoryLoader,
       mergeMappings,
       mutationMatters,
+      modelInfoFor,
+      modelCaptionFor,
       readContext,
+      reconcileModelInfoMenus,
       runtimeUrls,
       scanSwitcher,
       setActivityAdapter: (adapter) => { activityAdapter = adapter; schedule(); },
