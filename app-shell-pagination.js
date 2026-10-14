@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3 Beta 3";
+  const VERSION = "0.6.3 Beta 5";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -13,6 +13,8 @@
   const MODEL_INFO = "[data-message-model-info]";
   const CONTROLS = "[data-batch-edit-pagination]";
   const ASSISTANT_CONTROLS = "[data-batch-assistant-pagination]";
+  const VERSION_GROUP_CLASS = "flex items-center gap-0.5 text-xs text-secondary select-none";
+  const VERSION_BUTTON_CLASS = "no-drag cursor-interaction items-center select-none disabled:cursor-default aria-disabled:cursor-default focus:outline-hidden disabled:opacity-40 aria-disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 whitespace-nowrap flex border gap-1 rounded-full electron:rounded-md text-tertiary not-disabled:not-aria-disabled:hover:bg-primary-ghost-hover data-[state=open]:bg-primary-ghost-hover border-transparent electron:p-1 electron:[&>svg]:icon-sm flex items-center justify-center p-0.5";
   const CLIENT_MESSAGES = {
     previous: { id: "chatgpt.versions.previous", defaultMessage: "Previous version" },
     next: { id: "chatgpt.versions.next", defaultMessage: "Next version" },
@@ -781,18 +783,33 @@
   const createButton = (label, direction, action) => {
     const button = document.createElement("button");
     button.type = "button";
+    button.className = VERSION_BUTTON_CLASS;
     button.setAttribute("aria-label", label);
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const symbol = `chevron-${direction < 0 ? "left" : "right"}-md-light-16`;
+    const nativeIcon = `.turn-action-controls button:not(${CONTROLS} button) svg`;
+    const reference = document.querySelector(`${nativeIcon}:has(use[href$="#${symbol}"])`)
+      ?? document.querySelector(`${nativeIcon}:has(use[href*=".svg#"])`);
+    const svg = reference?.cloneNode(false) ?? document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.removeAttribute("id");
     svg.setAttribute("viewBox", "0 0 16 16");
-    svg.setAttribute("fill", "none");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
     svg.setAttribute("aria-hidden", "true");
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", direction < 0 ? "M10 3 5 8l5 5" : "m6 3 5 5-5 5");
-    path.setAttribute("stroke", "currentColor");
-    path.setAttribute("stroke-width", "1.5");
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    svg.append(path);
+    svg.setAttribute("focusable", "false");
+    if (reference) {
+      const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", `${reference.querySelector("use").getAttribute("href").split("#")[0]}#${symbol}`);
+      use.setAttribute("fill", "currentColor");
+      svg.append(use);
+    } else {
+      // Use the same native glyph while the toolbar's icon sprite is unavailable.
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", direction < 0
+        ? "M9.871 11.629a.525.525 0 1 1-.742.742L5.364 8.606a.86.86 0 0 1 0-1.212L9.13 3.629a.525.525 0 1 1 .742.742L6.242 8z"
+        : "M5.962 11.629a.525.525 0 1 0 .743.742l3.764-3.765a.86.86 0 0 0 0-1.212L6.705 3.629a.525.525 0 1 0-.743.742L9.592 8z");
+      path.setAttribute("fill", "currentColor");
+      svg.append(path);
+    }
     button.append(svg);
     button.addEventListener("click", action);
     return button;
@@ -872,6 +889,7 @@
     if (!controls) {
       const text = labels(bubble);
       controls = document.createElement("span");
+      controls.className = VERSION_GROUP_CLASS;
       controls.setAttribute("data-batch-edit-pagination", "");
       controls.setAttribute("role", "group");
       controls.setAttribute("aria-label", text.group);
@@ -1112,6 +1130,7 @@
     if (!controls) {
       const text = labels(message, true);
       controls = document.createElement("span");
+      controls.className = VERSION_GROUP_CLASS;
       controls.setAttribute("data-batch-edit-pagination", "");
       controls.setAttribute("data-batch-assistant-pagination", "");
       controls.setAttribute("role", "group");
