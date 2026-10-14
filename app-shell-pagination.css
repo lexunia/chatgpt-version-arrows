@@ -25,8 +25,8 @@
   width: 1.5rem;
 }
 
-[data-batch-edit-pagination] button:hover:not(:disabled) {
-  background: var(--bg-tertiary, rgba(0, 0, 0, 0.08));
+[data-batch-edit-pagination] button:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: var(--color-background-primary-ghost-hover);
 }
 
 [data-batch-edit-pagination] button:focus-visible {
