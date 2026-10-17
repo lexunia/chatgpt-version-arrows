@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3 Beta 5";
+  const VERSION = "0.6.3 Beta 6";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1446,8 +1446,9 @@
       console.warn(`[Version Arrows][Work edit] ${message}`);
     };
     const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Turn data before the action fields can contain nested objects.
     const isBuilder = (source) => source.includes("renderedTurns") &&
-      /return\{[^{}]{0,1200}isReadOnly:[^{}]*isWorkConversation:[^{}]*onEditUserMessage:[^{}]*timestampSeparatorAtMs:/.test(source);
+      /\bisReadOnly:[^{}]*isWorkConversation:[^{}]*onEditUserMessage:[^{}]*timestampSeparatorAtMs:/.test(source);
 
     const resolveNative = (candidate) => {
       if (!candidate?.m || !candidate?.c) return null;
