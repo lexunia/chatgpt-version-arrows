@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.3 Beta 6";
+  const VERSION = "0.6.3 Beta 7";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1198,6 +1198,15 @@
     }
   };
 
+  const importedExports = (candidate, source, alias) => {
+    const name = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const imports = [...source.matchAll(new RegExp(
+      `(?:^|[^$\\w])${name}\\s*=\\s*[$\\w]+\\(\\s*["']([^"']+)["']\\s*\\)`, "g",
+    ))];
+    const ids = new Set(imports.map((match) => match[1]));
+    return ids.size === 1 ? candidate.c?.[[...ids][0]]?.exports : null;
+  };
+
   const isHistoryLoaderSource = (source) => source.includes("forceFull") &&
     source.includes("/conversations/{conversation_id}") &&
     source.includes("/conversation/{conversation_id}") &&
@@ -1341,19 +1350,29 @@
     // guessing busy state from DOM changes or initializing other modules.
     try {
       const selectorSource = candidateSource(switcher).replace(/\s+/g, "");
-      const guard = selectorSource.match(
-        /if\(\w+\.get\((\w+)\.(\w+),\w+\)\|\|null==\w+\|\|\(0,\1\.(\w+)\)\(\w+\.get\(\1\.(\w+),\w+\)\)/,
-      );
       // A barrel can re-export the same selector but its local variable names
       // belong to a different closure. Resolve dependencies only in the factory
       // that actually defines this function, not the first export encountered.
       const factory = switcherModuleIds.map(id => candidateSource(runtime.m?.[id]))
         .find(source => source.replace(/\s+/g, "").includes(selectorSource));
-      const dependency = guard && factory?.match(new RegExp(`\\b${guard[1]}=\\w+\\(["']([^"']+)["']\\)`));
-      const state = dependency && runtime.c[dependency[1]]?.exports;
-      if (state && state[guard[2]]?.kind === "readable-family" &&
-          state[guard[4]]?.kind === "readable-family" && typeof state[guard[3]] === "function") {
-        const busySignal = state[guard[2]], statusSignal = state[guard[4]], classify = state[guard[3]];
+      const matches = [];
+      for (const guard of selectorSource.matchAll(/\bif\(([^{};]+)\)\{?return\b/g)) {
+        const parts = guard[1].split("||");
+        const reads = parts.map((part) => part.match(/^([$\w]+)\.get\(([$\w]+)\.([$\w]+),([$\w]+)\)$/)).filter(Boolean);
+        const active = parts.map((part) => part.match(/^\(0,([$\w]+)\.([$\w]+)\)\(([$\w]+)\.get\(\1\.([$\w]+),([$\w]+)\)\)$/)).filter(Boolean);
+        for (const read of reads) for (const status of active) {
+          if (read[1] !== status[3] || read[2] !== status[1] || read[4] !== status[5]) continue;
+          const state = factory && importedExports(runtime, factory, read[2]);
+          const busySignal = state?.[read[3]], statusSignal = state?.[status[4]], classify = state?.[status[2]];
+          if (busySignal?.kind !== "readable-family" || statusSignal?.kind !== "readable-family" ||
+              typeof classify !== "function") continue;
+          if (!matches.some((item) => item.busySignal === busySignal && item.statusSignal === statusSignal && item.classify === classify)) {
+            matches.push({ busySignal, statusSignal, classify });
+          }
+        }
+      }
+      if (matches.length === 1) {
+        const { busySignal, statusSignal, classify } = matches[0];
         activityAdapter = {
           read(scope, id) {
             const switching = scope.get(busySignal, id);
@@ -1453,10 +1472,10 @@
     const resolveNative = (candidate) => {
       if (!candidate?.m || !candidate?.c) return null;
       const factories = Object.values(candidate.m).map(sourceOf)
-        .filter((source) => source.includes("Work messages cannot be edited with the Chat flow."));
+        .filter((source) => source.includes("edit_message_unsupported_conversation"));
       if (factories.length !== 1) return null;
       const source = factories[0];
-      const marker = source.indexOf('"edit_message_unsupported_conversation"');
+      const marker = source.search(/["']edit_message_unsupported_conversation["']/);
       const start = source.lastIndexOf("async function ", marker);
       const tail = source.slice(start).match(/\}finally\{[$\w]+\.set\(([$\w]+)\.([$\w]+),[$\w]+,!1\)\}\}/);
       if (start < 0 || !tail) return null;
@@ -1465,9 +1484,9 @@
         const matches = [...edit.matchAll(new RegExp(pattern, "g"))];
         if (matches.length !== 1) throw new Error("native edit reference changed");
         const [, alias, name] = matches[0];
-        const binding = source.match(new RegExp(`\\b${escape(alias)}=[$\\w]+\\(["']([^"']+)["']\\)`));
-        if (!binding || !candidate.c[binding[1]]) throw new Error("native edit dependency unavailable");
-        return candidate.c[binding[1]].exports[name];
+        const exports = importedExports(candidate, source, alias);
+        if (!exports) throw new Error("native edit dependency unavailable");
+        return exports[name];
       };
       try {
         const busy = ref('if\\([$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)\\)throw new [$\\w]+\\.[$\\w]+\\("edit_message_busy"');
@@ -1485,8 +1504,7 @@
         ));
         if (!requestBody) return null;
         const exported = (alias, name) => {
-          const id = source.match(new RegExp(`\\b${escape(alias)}=[$\\w]+\\(["']([^"']+)["']\\)`))?.[1];
-          return id && candidate.c[id]?.exports?.[name];
+          return importedExports(candidate, source, alias)?.[name];
         };
         const requestState = exported(requestBody[1], requestBody[2]);
         const savedId = exported(requestBody[3], requestBody[4]);
