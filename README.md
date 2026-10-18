@@ -1,7 +1,5 @@
 # ChatGPT Version Arrows
 
-This Chrome extension restores the previous/next version arrows for edited messages and regenerated responses, so you can switch between versions directly in the conversation. Works with both ChatGPT's classic web client and the newer AppShell client.
-
 <p align="center">
   <img
     src="assets/pagination-demo.png"
@@ -9,6 +7,8 @@ This Chrome extension restores the previous/next version arrows for edited messa
     width="900"
   >
 </p>
+
+This Chrome extension restores the previous/next version arrows for edited messages and regenerated responses, so you can switch between versions directly in the conversation. Works with both ChatGPT's classic web client and the newer AppShell client.
 
 > [!IMPORTANT]
 > **AppShell remembers your selected branch.** Switching versions uses the client’s native navigation, which saves the selected branch on the server even without sending a message. Unlike in the classic client, this selection persists when you reopen the chat or use another device. Before leaving, switch back to the branch you want to keep active.
