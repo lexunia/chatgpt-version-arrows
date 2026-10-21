@@ -398,7 +398,8 @@
   const nativeActionFor = (button) => {
     if (button.closest(CONTROLS)) return null;
     const icons = [...button.querySelectorAll("use")].map((use) =>
-      (use.getAttribute("href") ?? use.getAttribute("xlink:href") ?? "").split("#").pop());
+      (use.getAttribute("href") ?? use.getAttribute("xlink:href") ?? "")
+        .split("#").pop().replace(/^codex-icon-/, ""));
     if (icons.some((id) => id.startsWith("ellipsis-horizontal-"))) return "more";
     if (icons.some((id) => id.startsWith("arrows-clockwise-rotate-"))) return "regenerate";
     if (icons.some((id) => id.startsWith("chevron-left-"))) return "previous";
@@ -788,6 +789,7 @@
     const symbol = `chevron-${direction < 0 ? "left" : "right"}-md-light-16`;
     const nativeIcon = `.turn-action-controls button:not(${CONTROLS} button) svg`;
     const reference = document.querySelector(`${nativeIcon}:has(use[href$="#${symbol}"])`)
+      ?? document.querySelector(`${nativeIcon}:has(use[href$="#codex-icon-${symbol}"])`)
       ?? document.querySelector(`${nativeIcon}:has(use[href*=".svg#"])`);
     const svg = reference?.cloneNode(false) ?? document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.removeAttribute("id");
@@ -798,7 +800,9 @@
     svg.setAttribute("focusable", "false");
     if (reference) {
       const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      use.setAttribute("href", `${reference.querySelector("use").getAttribute("href").split("#")[0]}#${symbol}`);
+      const [sprite, nativeSymbol] = reference.querySelector("use").getAttribute("href").split("#");
+      const prefix = nativeSymbol.startsWith("codex-icon-") ? "codex-icon-" : "";
+      use.setAttribute("href", `${sprite}#${prefix}${symbol}`);
       use.setAttribute("fill", "currentColor");
       svg.append(use);
     } else {
