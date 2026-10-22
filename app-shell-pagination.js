@@ -39,6 +39,13 @@
   const warned = new Set();
   const wrappedHistoryFactories = new WeakSet();
   const historyLoaders = new WeakMap();
+  const nativeActionKinds = new WeakMap();
+  const controlIcons = new WeakMap();
+  const failedIconFactories = new WeakSet();
+  let nativeIcons = null;
+  let nativeIconScanSize = "";
+  let nativeArrowTemplate = null;
+  let nativeArrowButtonClass = VERSION_BUTTON_CLASS;
   const diagnostics = DIAGNOSTICS_ENABLED ? {
     version: VERSION,
     installedAt: new Date().toISOString(),
@@ -395,15 +402,18 @@
     return value.props?.id === id || hasMessageId(value.props?.children, id, depth + 1);
   };
 
+  const nativeArrowPair = (wrapper) => {
+    if (!wrapper || wrapper.closest(CONTROLS) || !wrapper.closest(".turn-action-controls")) return null;
+    const buttons = [...wrapper.children].filter((child) => child.tagName === "BUTTON");
+    if (buttons.length !== 2 || wrapper.querySelectorAll("button").length !== 2 ||
+        !/^\s*\d+\s*\/\s*\d+\s*$/.test(wrapper.textContent ?? "")) return null;
+    return { wrapper, previous: buttons[0], next: buttons[1] };
+  };
+
   const nativeActionFor = (button) => {
     if (button.closest(CONTROLS)) return null;
-    const icons = [...button.querySelectorAll("use")].map((use) =>
-      (use.getAttribute("href") ?? use.getAttribute("xlink:href") ?? "")
-        .split("#").pop().replace(/^codex-icon-/, ""));
-    if (icons.some((id) => id.startsWith("ellipsis-horizontal-"))) return "more";
-    if (icons.some((id) => id.startsWith("arrows-clockwise-rotate-"))) return "regenerate";
-    if (icons.some((id) => id.startsWith("chevron-left-"))) return "previous";
-    if (icons.some((id) => id.startsWith("chevron-right-"))) return "next";
+    const pair = nativeArrowPair(button.parentElement);
+    if (pair) return pair.previous === button ? "previous" : "next";
     const props = nativePropsFor(button);
     const source = typeof props?.onClick === "function" ? Function.prototype.toString.call(props.onClick) : "";
     if (hasMessageId(props?.children, "chatgpt.versions.open") ||
@@ -412,6 +422,21 @@
         (source.includes("renderFormat:") && source.includes("message:"))) return "edit";
     if (hasMessageId(props?.children, "codex.userMessage.sendEditedMessage") ||
         (button.type === "submit" && button.closest("form")?.querySelector('textarea, [contenteditable="true"]'))) return "send-edit";
+    const key = getFiber(button);
+    let fiber = currentFiber(key ? button[key] : null);
+    for (let depth = 0; fiber && depth < 40; depth++, fiber = fiber.return) {
+      const type = fiber.type;
+      const component = typeof type === "function" ? type : type?.render ?? type?.type;
+      if (typeof component !== "function") continue;
+      if (!nativeActionKinds.has(component)) {
+        const source = candidateSource(component);
+        nativeActionKinds.set(component,
+          source.includes("chatgptConversations.messageActions.more") ? "more" :
+            source.includes("chatgptConversations.regenerate.label") ? "regenerate" : null);
+      }
+      const action = nativeActionKinds.get(component);
+      if (action) return action;
+    }
     return null;
   };
 
@@ -779,42 +804,47 @@
     for (const [button, label] of [[controls.firstElementChild, text.previous], [controls.lastElementChild, text.next]]) {
       if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
     }
+    updateControlIcon(controls.firstElementChild, -1);
+    updateControlIcon(controls.lastElementChild, 1);
+  };
+
+  const updateControlIcon = (button, direction) => {
+    const action = direction < 0 ? "previous" : "next";
+    const reference = nativeArrowTemplate?.[action];
+    const candidate = nativeIcons?.[action];
+    const factory = candidate && !failedIconFactories.has(candidate) ? candidate : null;
+    let origin = factory ?? reference?.querySelector("svg") ?? null;
+    const className = reference?.className ?? nativeArrowButtonClass;
+    if (button.className !== className) button.className = className;
+    if (controlIcons.has(button) && controlIcons.get(button) === origin) return;
+    let svg;
+    if (factory) {
+      try {
+        svg = factory.createElement(document);
+        if (svg?.namespaceURI !== "http://www.w3.org/2000/svg" || svg.localName !== "svg") {
+          throw new Error("Invalid native icon");
+        }
+      } catch {
+        svg = null;
+        failedIconFactories.add(factory);
+        origin = reference?.querySelector("svg") ?? null;
+      }
+    }
+    if (!svg && origin?.nodeType === 1) svg = origin.cloneNode(true);
+    if (svg) {
+      svg.removeAttribute("id");
+      button.replaceChildren(svg);
+    } else {
+      button.textContent = direction < 0 ? "<" : ">";
+    }
+    controlIcons.set(button, origin);
   };
 
   const createButton = (label, direction, action) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = VERSION_BUTTON_CLASS;
     button.setAttribute("aria-label", label);
-    const symbol = `chevron-${direction < 0 ? "left" : "right"}-md-light-16`;
-    const nativeIcon = `.turn-action-controls button:not(${CONTROLS} button) svg`;
-    const reference = document.querySelector(`${nativeIcon}:has(use[href$="#${symbol}"])`)
-      ?? document.querySelector(`${nativeIcon}:has(use[href$="#codex-icon-${symbol}"])`)
-      ?? document.querySelector(`${nativeIcon}:has(use[href*=".svg#"])`);
-    const svg = reference?.cloneNode(false) ?? document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.removeAttribute("id");
-    svg.setAttribute("viewBox", "0 0 16 16");
-    svg.setAttribute("width", "16");
-    svg.setAttribute("height", "16");
-    svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("focusable", "false");
-    if (reference) {
-      const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      const [sprite, nativeSymbol] = reference.querySelector("use").getAttribute("href").split("#");
-      const prefix = nativeSymbol.startsWith("codex-icon-") ? "codex-icon-" : "";
-      use.setAttribute("href", `${sprite}#${prefix}${symbol}`);
-      use.setAttribute("fill", "currentColor");
-      svg.append(use);
-    } else {
-      // Use the same native glyph while the toolbar's icon sprite is unavailable.
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", direction < 0
-        ? "M9.871 11.629a.525.525 0 1 1-.742.742L5.364 8.606a.86.86 0 0 1 0-1.212L9.13 3.629a.525.525 0 1 1 .742.742L6.242 8z"
-        : "M5.962 11.629a.525.525 0 1 0 .743.742l3.764-3.765a.86.86 0 0 0 0-1.212L6.705 3.629a.525.525 0 1 0-.743.742L9.592 8z");
-      path.setAttribute("fill", "currentColor");
-      svg.append(path);
-    }
-    button.append(svg);
+    updateControlIcon(button, direction);
     button.addEventListener("click", action);
     return button;
   };
@@ -1055,14 +1085,9 @@
 
   const nativeAssistantPaginationFor = (row) => {
     if (!row) return null;
-    const buttons = [...row.querySelectorAll("button")];
-    const previousButtons = buttons.filter((button) => nativeActionFor(button) === "previous");
-    const nextButtons = buttons.filter((button) => nativeActionFor(button) === "next");
-    for (const previous of previousButtons) {
-      const wrapper = previous.parentElement;
-      if (!wrapper || wrapper.matches(ASSISTANT_CONTROLS)) continue;
-      const next = nextButtons.find((candidate) => candidate.parentElement === wrapper);
-      if (next && /^\s*\d+\s*\/\s*\d+\s*$/.test(wrapper.textContent ?? "")) return wrapper;
+    for (const button of row.querySelectorAll("button")) {
+      const pair = nativeArrowPair(button.parentElement);
+      if (pair) return pair.wrapper;
     }
     return null;
   };
@@ -1209,6 +1234,34 @@
     ))];
     const ids = new Set(imports.map((match) => match[1]));
     return ids.size === 1 ? candidate.c?.[[...ids][0]]?.exports : null;
+  };
+
+  const resolveNativeIcons = (candidate) => {
+    const descriptors = { previous: CLIENT_MESSAGES.previousResponse, next: CLIENT_MESSAGES.nextResponse };
+    const matches = { previous: new Set(), next: new Set() };
+    for (const factory of Object.values(candidate?.m ?? {})) {
+      const source = candidateSource(factory);
+      if (!Object.values(descriptors).every(({ id }) => source.includes(id))) continue;
+      for (const [action, { id }] of Object.entries(descriptors)) {
+        const position = source.indexOf(id);
+        const reference = source.slice(position, position + 700).match(
+          /children\s*:\s*\(\s*0\s*,\s*[$\w]+\.jsx\s*\)\s*\(\s*([$\w]+)\.([$\w]+)\s*,/,
+        );
+        const icon = reference && importedExports(candidate, source, reference[1])?.[reference[2]];
+        if (typeof icon?.createElement === "function") matches[action].add(icon);
+      }
+    }
+    if (matches.previous.size !== 1 || matches.next.size !== 1) return null;
+    const icons = Object.fromEntries(Object.entries(matches).map(([action, values]) => [action, [...values][0]]));
+    return icons.previous !== icons.next ? icons : null;
+  };
+
+  const scanNativeIcons = () => {
+    if (nativeIcons || !runtime?.m || !runtime?.c) return;
+    const size = `${Object.keys(runtime.m).length}:${Object.keys(runtime.c).length}`;
+    if (size === nativeIconScanSize) return;
+    nativeIconScanSize = size;
+    nativeIcons = resolveNativeIcons(runtime);
   };
 
   const isHistoryLoaderSource = (source) => source.includes("forceFull") &&
@@ -1735,6 +1788,7 @@
   const attachRuntime = (candidate) => {
     if (runtime || !candidate?.c || !candidate?.m) return false;
     runtime = candidate;
+    scanNativeIcons();
     scanConversationIdentity();
     installFullHistory(candidate);
     workEditor?.attachRuntime(candidate);
@@ -1811,6 +1865,12 @@
       return;
     }
     if (!runtime) void discoverRuntime();
+    else scanNativeIcons();
+    nativeArrowTemplate = [...document.querySelectorAll(".turn-action-controls")]
+      .map((row) => nativeArrowPair(nativeAssistantPaginationFor(row))).find(Boolean) ?? null;
+    nativeArrowButtonClass = nativeArrowTemplate?.previous.className ??
+      [...document.querySelectorAll(".turn-action-controls button")]
+        .find((button) => nativeActionFor(button) === "regenerate")?.className ?? VERSION_BUTTON_CLASS;
     const bubbles = [...document.querySelectorAll(USER_BUBBLE)];
     let painted = 0;
     for (const bubble of bubbles) {
@@ -1972,6 +2032,7 @@
       intlFor,
       nativeActionFor,
       nativeAssistantPaginationFor,
+      resolveNativeIcons,
       suppressNativeVersions,
       updateControlLabels,
       graphFor,
