@@ -116,6 +116,11 @@ header[data-version-graph-header] {
 .version-graph-button:hover:not(:disabled), .version-graph-result:hover {
   background: var(--color-background-primary-ghost-hover);
 }
+.version-graph-go,
+.version-graph-go:hover:not(:disabled) {
+  background: var(--color-background-composer-primary, var(--color-background-accent-action, var(--color-text-primary, CanvasText)));
+  color: var(--color-text-composer-primary, var(--color-text-accent-action, var(--color-text-inverse, Canvas)));
+}
 
 .version-graph button:focus-visible,
 .version-graph input:focus-visible,
@@ -210,7 +215,7 @@ header[data-version-graph-header] {
 }
 .version-graph .version-graph-card.is-selected {
   outline-style: solid;
-  outline-color: var(--color-background-user-message, var(--color-text-primary));
+  outline-color: var(--color-background-composer-primary, var(--color-background-accent-action, var(--color-text-primary)));
   outline-width: calc(3px / var(--version-graph-scale, 1));
   outline-offset: calc(4px / var(--version-graph-scale, 1));
 }
@@ -304,10 +309,11 @@ header[data-version-graph-header] {
   inset-inline-end: 8px;
   width: 28px;
   height: 28px;
+  min-width: 28px;
   min-height: 28px;
   padding: 0;
-  font-size: 20px;
 }
+.version-graph-close-icon { display: block; flex-shrink: 0; width: 16px; height: 16px; }
 .version-graph-detail-text.is-expanded { overflow: auto; overscroll-behavior: contain; }
 .version-graph-actions { justify-content: space-between; }
 .version-graph-status { flex-shrink: 0; margin: 0; padding: 0 16px 10px; color: var(--color-text-tertiary); }

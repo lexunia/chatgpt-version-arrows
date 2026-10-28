@@ -1109,8 +1109,15 @@
       detailActions = make("div", "version-graph-actions", detail);
       const closePreview = button(detail, "close", "×", () => clearSelection(true));
       closePreview.classList.add("version-graph-detail-close");
+      // Native xmark-md-light-16 geometry, independent of the text baseline.
+      const closeIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [name, value] of Object.entries({ viewBox: "0 0 16 16", fill: "currentColor",
+        "aria-hidden": "true", focusable: "false", class: "version-graph-close-icon" })) closeIcon.setAttribute(name, value);
+      const closePath = document.createElementNS(closeIcon.namespaceURI, "path");
+      closePath.setAttribute("d", "M10.962 4.295a.525.525 0 0 1 .742.743L8.742 7.999l2.963 2.963a.526.526 0 0 1-.742.743L8 8.742l-2.963 2.963a.525.525 0 0 1-.742-.743L7.258 8 4.296 5.038a.525.525 0 1 1 .742-.743L8 7.257z");
+      closeIcon.append(closePath); closePreview.replaceChildren(closeIcon);
       expand = button(detailActions, "more", null, () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); });
-      go = make("button", "version-graph-button", detailActions); go.type = "button"; go.textContent = "Go to message";
+      go = make("button", "version-graph-button version-graph-go", detailActions); go.type = "button"; go.textContent = "Go to message";
       go.addEventListener("click", async () => {
         if (!selected || !owner || navigating || !currentOwner() || conversationBusy(owner)) return;
         const requestedOwner = owner, requestedId = selected;
