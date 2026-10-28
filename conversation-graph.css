@@ -132,7 +132,7 @@ header[data-version-graph-header] {
   min-width: 0;
   box-sizing: border-box;
   border: 1px solid var(--color-border, var(--color-border-primary-outline));
-  border-radius: var(--radius-lg, 8px);
+  border-radius: 9999px;
   background: var(--color-surface, var(--color-background-primary-surface));
   color: inherit;
   font: inherit;
