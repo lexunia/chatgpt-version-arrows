@@ -1,0 +1,54 @@
+.version-graph-export { position: relative; flex: 0 0 auto; }
+.version-graph:has(.version-graph-export) { container: version-graph-export-panel / inline-size; }
+@container version-graph-export-panel (max-width: 320px) {
+  .version-graph-toolbar { height: auto; flex-wrap: wrap; }
+  .version-graph-toolbar > .version-graph-search { flex-basis: calc(100% - 44px); }
+  .version-graph-tools { margin-inline-start: auto; }
+}
+.version-graph-export-trigger { position: relative; }
+.version-graph-export.is-exporting .version-graph-export-label { visibility: hidden; }
+.version-graph-export-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: version-graph-export-spin 750ms linear infinite;
+}
+.version-graph-export-menu,
+.version-graph-export-notice {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid var(--color-border, var(--color-border-primary-outline));
+  border-radius: var(--radius-lg, 8px);
+  background: var(--color-surface-secondary, var(--color-background-primary-surface));
+  color: var(--color-text-primary);
+}
+.version-graph-export-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-lg, 8px);
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.version-graph-export-menu button:hover,
+.version-graph-export-menu button:focus-visible { background: var(--color-background-primary-ghost-hover); }
+.version-graph-export-notice { padding: 12px; overflow-wrap: anywhere; }
+@keyframes version-graph-export-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .version-graph-export-spinner { animation: none; }
+}

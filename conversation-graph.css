@@ -1,0 +1,332 @@
+/* A sibling dock reduces the native chat's actual available width. */
+.version-graph-dock {
+  position: relative;
+  flex: 0 0 auto;
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: clip;
+  transition: width 180ms ease;
+}
+.version-graph-dock[data-version-graph-open] { width: var(--version-graph-width); }
+header[data-version-graph-header] {
+  right: var(--version-graph-header-reserve, 0px);
+  transition: right 180ms ease;
+}
+.version-graph-toggle-slot {
+  --version-graph-edge-gap: calc(var(--spacing, .25rem) * 2);
+  display: flex;
+  flex: 0 0 auto;
+  height: 100%;
+  /* The native titlebar already contributes its end padding before this slot. */
+  margin-inline-start: calc(var(--spacing-toolbar-action, var(--version-graph-edge-gap)) - var(--version-graph-edge-gap));
+  padding-inline-end: var(--version-graph-edge-gap);
+  align-items: center;
+  justify-content: flex-start;
+}
+.version-graph-toggle-slot[hidden] { display: none; }
+
+[data-version-graph-toggle] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+[data-version-graph-toggle]:disabled { opacity: 0.4; cursor: default; }
+.version-graph-sidebar-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  transform: scaleX(-1);
+}
+
+.version-graph {
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: var(--version-graph-width, 440px);
+  min-width: 0;
+  border-left: 1px solid var(--color-border, var(--color-border-primary-outline));
+  background: var(--color-surface-secondary, var(--color-background-primary-surface));
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform 180ms ease, visibility 180ms;
+  -webkit-app-region: no-drag;
+}
+
+[data-version-graph-open] > .version-graph {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.version-graph [hidden] { display: none !important; }
+
+.version-graph-toolbar,
+.version-graph-tools,
+.version-graph-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+}
+
+.version-graph-toolbar {
+  gap: 4px;
+  height: var(--app-shell-titlebar-height, var(--height-toolbar, 52px));
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border, var(--color-border-primary-outline));
+}
+
+.version-graph-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: var(--radius-lg, 8px);
+  background: transparent;
+  color: var(--color-text-secondary, currentColor);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.version-graph-button:disabled { opacity: 0.4; cursor: default; }
+.version-graph-button:hover:not(:disabled), .version-graph-result:hover {
+  background: var(--color-background-primary-ghost-hover);
+}
+
+.version-graph button:focus-visible,
+.version-graph input:focus-visible,
+.version-graph-resize:focus-visible,
+.version-graph-detail-resize:focus-visible,
+.version-graph-viewport:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-text-primary));
+  outline-offset: -2px;
+}
+
+.version-graph-search { flex: 1 1 auto; min-width: 40px; }
+.version-graph-search input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border, var(--color-border-primary-outline));
+  border-radius: var(--radius-lg, 8px);
+  background: var(--color-surface, var(--color-background-primary-surface));
+  color: inherit;
+  font: inherit;
+  padding: 7px 10px;
+}
+.version-graph-search input::placeholder { color: var(--color-text-tertiary); }
+
+.version-graph-results {
+  flex-shrink: 0;
+  max-height: 25%;
+  overflow: auto;
+  border-bottom: 1px solid var(--color-border, var(--color-border-primary-outline));
+  padding: 0 8px 8px;
+  overscroll-behavior: contain;
+}
+.version-graph-result {
+  display: block;
+  width: 100%;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  margin: 2px 0;
+  border: 0;
+  border-radius: var(--radius-lg, 8px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.version-graph-search-match {
+  background-color: var(--color-background-text-selection, Highlight);
+  color: var(--color-text, HighlightText);
+}
+
+.version-graph-viewport {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 80px;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: grab;
+  user-select: none;
+  contain: strict;
+}
+.version-graph-viewport.is-dragging { cursor: grabbing; }
+.version-graph-canvas { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
+.version-graph-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.version-graph-lines path { fill: none; stroke: var(--color-border, var(--color-border-primary-outline)); stroke-width: 5px; stroke-linecap: round; stroke-linejoin: round; }
+.version-graph-lines path.is-current-branch {
+  stroke: var(--color-background-composer-primary, var(--color-background-accent-action, var(--color-text-primary)));
+}
+.version-graph-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--version-graph-card-width, 256px);
+  height: var(--version-graph-card-height, 128px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--color-border, var(--color-border-primary-outline));
+  border-radius: var(--radius-2xl, 16px);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: start;
+  cursor: pointer;
+}
+.version-graph-card[data-role="assistant"] {
+  background: var(--composer-background-color, var(--color-surface-elevated, transparent));
+}
+.version-graph .version-graph-card.is-selected {
+  outline-style: solid;
+  outline-color: var(--color-background-user-message, var(--color-text-primary));
+  outline-width: calc(3px / var(--version-graph-scale, 1));
+  outline-offset: calc(4px / var(--version-graph-scale, 1));
+}
+.version-graph-overview {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 128px;
+  height: 128px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--color-border, var(--color-border-primary-outline));
+  border-radius: var(--radius-lg, 8px);
+  background: var(--color-surface-secondary, var(--color-background-primary-surface));
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  touch-action: manipulation;
+}
+.version-graph-overview svg { display: block; width: 100%; height: 100%; }
+.version-graph-overview-edges { fill: none; stroke: var(--color-text-tertiary); stroke-width: 0.5; vector-effect: non-scaling-stroke; }
+.version-graph-overview-branch {
+  fill: none;
+  stroke: var(--color-background-composer-primary, var(--color-background-accent-action, var(--color-text-primary)));
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.version-graph-overview-users { fill: var(--color-background-user-message); stroke: var(--color-text-tertiary); stroke-width: 0.3; }
+.version-graph-overview-answers { fill: none; stroke: var(--color-text-tertiary); stroke-width: 0.6; }
+.version-graph-overview-frame {
+  fill: none;
+  stroke: var(--color-background-composer-primary, var(--color-background-accent-action, var(--color-text-primary)));
+  stroke-width: 2;
+}
+.version-graph-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.version-graph-tools {
+  gap: 0;
+  padding: 0;
+}
+.version-graph-tools .version-graph-button { min-width: 26px; padding-inline: 4px; }
+.version-graph-zoom { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+.version-graph-tools .version-graph-button > span,
+.version-graph-zoom {
+  /* Centre the font's cap-height-to-baseline box, without a manual offset. */
+  text-box: trim-both cap alphabetic;
+}
+.version-graph-detail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-height: 0;
+  border-top: 1px solid var(--color-border, var(--color-border-primary-outline));
+}
+.version-graph-detail-resize {
+  flex: 0 0 8px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.version-graph-detail-resize::after {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 2px;
+  margin: 3px auto;
+  border-radius: 2px;
+  background: var(--color-border, var(--color-border-primary-outline));
+}
+.version-graph-detail-text {
+  display: block;
+  flex: 1 1 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  margin: 8px 16px 0;
+  margin-inline-end: 44px;
+  min-height: 0;
+  user-select: text;
+}
+.version-graph-detail-close {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 20px;
+}
+.version-graph-detail-text.is-expanded { overflow: auto; overscroll-behavior: contain; }
+.version-graph-actions { justify-content: space-between; }
+.version-graph-status { flex-shrink: 0; margin: 0; padding: 0 16px 10px; color: var(--color-text-tertiary); }
+.version-graph-status:empty { display: none; }
+.version-graph-empty { color: var(--color-text-tertiary); padding: 8px; }
+.version-graph-resize { position: absolute; inset: 0 auto 0 -4px; width: 8px; cursor: ew-resize; touch-action: none; }
+.version-graph-resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  pointer-events: none;
+  /* Match the native sidebar's transparent -> text/25 -> transparent rail. */
+  background: linear-gradient(to bottom, transparent,
+    color-mix(in oklab, var(--color-text, var(--color-text-primary)) 25%, transparent), transparent);
+  opacity: 0;
+}
+.version-graph-resize:is(:hover, :active, :focus-visible)::after { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .version-graph-dock, header[data-version-graph-header], .version-graph { transition: none; }
+}

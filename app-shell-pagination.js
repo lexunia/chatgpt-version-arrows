@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.6.4";
+  const VERSION = "0.7.0 Beta 1";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -77,6 +77,17 @@
   let graphRevision = 0;
   let historyRegistration = null;
   let workEditor = null;
+  let companion = null;
+  const callCompanion = (method, ...args) => {
+    if (!companion) return;
+    try { return companion[method]?.(...args); }
+    catch (error) {
+      const failed = companion;
+      companion = null;
+      try { failed.stop?.(); } catch { /* The arrows do not depend on optional UI. */ }
+      warnOnce("companion-failed", "An optional panel was disabled after an error.", { error: String(error) });
+    }
+  };
 
   const record = (type, details = {}) => {
     if (!diagnostics) return;
@@ -277,6 +288,9 @@
       liveMapping: batchMapping,
       mapping: compactMapping(batchMapping),
       revision: ++graphRevision,
+      // Applied mappings belong to the cached graph's lifetime. A long-lived
+      // AppScope adapter must not retain histories after graph eviction.
+      scopeApplications: new WeakMap(),
     };
   };
 
@@ -309,20 +323,65 @@
     };
   };
 
-  const storeGraph = (graph) => {
-    graphs.delete(graph.conversationId);
-    graphs.set(graph.conversationId, graph);
-    const protectedIds = new Set();
+  const workspaceVisible = (element) => {
+    if (!element?.isConnected || element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
+    for (let current = element; current; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden" || style.contentVisibility === "hidden") return false;
+    }
+    return true;
+  };
+
+  // Retained AppShell workspaces stay connected. Only visible owners should
+  // renew DOM controls/subscriptions or protect history from cache eviction.
+  const workspaceVisibility = new Map();
+  let workspaceObserver = null, workspaceTargets = new Set();
+  const stopWorkspaceWatch = () => {
+    workspaceObserver?.disconnect();
+    workspaceObserver = null;
+    workspaceTargets.clear(); workspaceVisibility.clear();
+  };
+  const updateWorkspaceWatch = () => {
+    workspaceVisibility.clear();
+    const targets = new Set();
+    for (const main of document.querySelectorAll("main")) {
+      workspaceVisibility.set(main, workspaceVisible(main));
+      for (let element = main; element; element = element.parentElement) targets.add(element);
+    }
+    if (targets.size === workspaceTargets.size && [...targets].every((element) => workspaceTargets.has(element))) return;
+    workspaceObserver?.disconnect();
+    workspaceTargets = targets;
+    if (!targets.size) return;
+    workspaceObserver ??= new MutationObserver(() => {
+      if ([...workspaceVisibility].some(([main, visible]) => workspaceVisible(main) !== visible)) schedule();
+    });
+    for (const element of targets) workspaceObserver.observe(element, {
+      attributes: true, attributeFilter: ["class", "style", "hidden", "aria-hidden", "inert"],
+    });
+  };
+  const activeWorkspace = (element) => {
+    const main = element.closest("main");
+    return main && workspaceVisibility.has(main) ? workspaceVisibility.get(main) : workspaceVisible(element);
+  };
+
+  const trimGraphs = () => {
+    if (graphs.size <= MAX_GRAPHS) return;
+    const protectedIds = new Set([...pendingConversations, ...historyLoads.keys()]);
     const pathMatch = location.pathname.match(/(?:^|\/)c\/([^/?#]+)/);
     if (pathMatch) protectedIds.add(pathMatch[1]);
     for (const controls of document.querySelectorAll(CONTROLS)) {
-      if (controls.dataset.conversationId) protectedIds.add(controls.dataset.conversationId);
+      if (controls.dataset.conversationId && workspaceVisible(controls)) protectedIds.add(controls.dataset.conversationId);
     }
     while (graphs.size > MAX_GRAPHS) {
       const victim = [...graphs.keys()].find((conversationId) => !protectedIds.has(conversationId));
       if (!victim) break;
       graphs.delete(victim);
     }
+  };
+  const storeGraph = (graph) => {
+    graphs.delete(graph.conversationId);
+    graphs.set(graph.conversationId, graph);
+    trimGraphs();
   };
 
   const getFiber = (element) => Object.getOwnPropertyNames(element)
@@ -431,7 +490,8 @@
       if (!nativeActionKinds.has(component)) {
         const source = candidateSource(component);
         nativeActionKinds.set(component,
-          source.includes("chatgptConversations.messageActions.more") ? "more" :
+          source.includes("chatgpt.versions.open") ? "versions" :
+            source.includes("chatgptConversations.messageActions.more") ? "more" :
             source.includes("chatgptConversations.regenerate.label") ? "regenerate" : null);
       }
       const action = nativeActionKinds.get(component);
@@ -649,6 +709,7 @@
       cache = new Map();
       scopeAdapters.set(owner, cache);
     }
+    for (const id of cache.keys()) if (!graphs.has(id)) cache.delete(id);
     return cache;
   };
 
@@ -681,7 +742,7 @@
       best = { mappingSignal: atom, score };
     }
     if (!best) return null;
-    const adapter = { mappingSignal: best.mappingSignal, lastApplied: null, lastRevision: 0 };
+    const adapter = { mappingSignal: best.mappingSignal };
     cache.set(conversationId, adapter);
     if (diagnostics) {
       record("scope-adapter-found", {
@@ -709,8 +770,7 @@
     }, false);
     if (!graph) return null;
     storeGraph(graph);
-    adapter.lastApplied = liveMapping;
-    adapter.lastRevision = graph.revision;
+    graph.scopeApplications.set(context.scope.node ?? context.scope, { mapping: liveMapping, revision: graph.revision });
     if (diagnostics) {
       record("graph-restored-from-scope", {
         conversationId: context.conversationId,
@@ -747,22 +807,22 @@
       return false;
     }
     if (conversationKey(context) !== conversationId) return false;
-    if (liveMapping === adapter.lastApplied && adapter.lastRevision === graph.revision) return true;
+    const scopeOwner = context.scope.node ?? context.scope;
+    const applied = graph.scopeApplications.get(scopeOwner);
+    if (applied && liveMapping === applied.mapping && applied.revision === graph.revision) return true;
     const merged = mergeMappings(graph.liveMapping ?? graph.batchMapping, liveMapping, graph.authoritative);
     graph.liveMapping = merged;
     graph.mapping = compactMapping(merged);
     if (!graph.authoritative) {
       // Read partial native state without writing cached pagination boundaries
       // back into AppScope. Older-page loading owns these links.
-      adapter.lastApplied = liveMapping;
-      adapter.lastRevision = graph.revision;
+      graph.scopeApplications.set(scopeOwner, { mapping: liveMapping, revision: graph.revision });
       return true;
     }
     try {
       if (!ownsGraph(context, graph) || conversationBusy(context)) return false;
       context.scope.set(adapter.mappingSignal, conversationId, merged);
-      adapter.lastApplied = merged;
-      adapter.lastRevision = graph.revision;
+      graph.scopeApplications.set(scopeOwner, { mapping: merged, revision: graph.revision });
       if (diagnostics) {
         diagnostics.scopeHydrations++;
         record("scope-hydrated", {
@@ -849,19 +909,19 @@
     return button;
   };
 
-  const requestSwitch = async (context, currentMessageId, targetMessageId, element) => {
+  const requestSwitch = async (context, currentMessageId, targetMessageId, element, isCurrent = () => true) => {
     if (!switcher) {
       await discoverRuntime();
       scanSwitcher();
     }
     if (!switcher) {
       warnOnce("switcher-missing", "The native branch switcher is not available.");
-      return;
+      return false;
     }
     const conversationId = conversationKey(context);
-    if (conversationBusy(context)) return;
+    if (!isCurrent() || conversationBusy(context)) return false;
     const graph = graphs.get(conversationId);
-    if (!ownsGraph(context, graph) || !graph.mapping[currentMessageId] || !graph.mapping[targetMessageId]) return;
+    if (!ownsGraph(context, graph) || !graph.mapping[currentMessageId] || !graph.mapping[targetMessageId]) return false;
     pendingConversations.add(conversationId);
     conversationErrors.delete(conversationId);
     if (diagnostics) {
@@ -875,11 +935,13 @@
     try {
       await switcher(context.scope, context.conversationId, targetMessageId);
       if (diagnostics) record("switch-completed", { conversationId: context.conversationId, targetMessageId });
+      return true;
     } catch (error) {
       const failureMessage = clientText(element, CLIENT_MESSAGES.failed);
       conversationErrors.set(conversationId, CLIENT_MESSAGES.failed);
       if (diagnostics) record("switch-failed", { conversationId: context.conversationId, targetMessageId, error: String(error) });
       warnOnce("switch-failed", failureMessage, { error: String(error) });
+      return false;
     } finally {
       pendingConversations.delete(conversationId);
       schedule();
@@ -1203,6 +1265,7 @@
   const reconcileAssistantPagination = (currentPass) => {
     let painted = 0;
     for (const message of document.querySelectorAll(ASSISTANT_MESSAGE)) {
+      if (!activeWorkspace(message)) continue;
       const messageId = message.getAttribute("data-chatgpt-selection-message-id");
       if (!messageId) continue;
       const context = readContext(message);
@@ -1858,20 +1921,24 @@
     if (diagnostics) diagnostics.renders++;
     const currentPass = ++pass;
     if (!isShell()) {
+      stopWorkspaceWatch();
       for (const controls of document.querySelectorAll(CONTROLS)) controls.remove();
       for (const info of document.querySelectorAll(MODEL_INFO)) info.remove();
       releaseActivityWatches(currentPass);
       releaseNativeButtons(currentPass);
+      trimGraphs();
+      callCompanion("reconcile");
       return;
     }
+    updateWorkspaceWatch();
     if (!runtime) void discoverRuntime();
     else scanNativeIcons();
     nativeArrowTemplate = [...document.querySelectorAll(".turn-action-controls")]
-      .map((row) => nativeArrowPair(nativeAssistantPaginationFor(row))).find(Boolean) ?? null;
+      .filter(activeWorkspace).map((row) => nativeArrowPair(nativeAssistantPaginationFor(row))).find(Boolean) ?? null;
     nativeArrowButtonClass = nativeArrowTemplate?.previous.className ??
       [...document.querySelectorAll(".turn-action-controls button")]
-        .find((button) => nativeActionFor(button) === "regenerate")?.className ?? VERSION_BUTTON_CLASS;
-    const bubbles = [...document.querySelectorAll(USER_BUBBLE)];
+        .find((button) => activeWorkspace(button) && nativeActionFor(button) === "regenerate")?.className ?? VERSION_BUTTON_CLASS;
+    const bubbles = [...document.querySelectorAll(USER_BUBBLE)].filter(activeWorkspace);
     let painted = 0;
     for (const bubble of bubbles) {
       const mountInfo = findMount(bubble);
@@ -1888,11 +1955,13 @@
     }
     const assistantPainted = reconcileAssistantPagination(currentPass);
     reconcileModelInfoMenus();
+    callCompanion("reconcile");
     releaseActivityWatches(currentPass);
     releaseNativeButtons(currentPass);
     for (const controls of document.querySelectorAll(CONTROLS)) {
       if (controls.dataset.pass !== String(currentPass)) controls.remove();
     }
+    trimGraphs();
     if (diagnostics) record("render", { bubbleCount: bubbles.length, painted, assistantPainted, graphCount: graphs.size });
     if (bubbles.length && graphs.size && !runtime) void discoverRuntime();
     else if (runtime && (!switcher || !activityAdapter)) scanSwitcher();
@@ -1905,13 +1974,16 @@
   }
 
   const mutationMatters = (mutation) => {
+    const companionDecision = callCompanion("mutationMatters", mutation);
+    if (typeof companionDecision === "boolean") return companionDecision;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(MODEL_INFO)) return false;
     if (mutation.type === "attributes" && mutation.target?.closest?.(CONTROLS)) return false;
     if (mutation.type === "attributes") return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.(".turn-action-controls")) return true;
     if (mutation.target?.nodeType === 1 && mutation.target.closest?.('[role="menu"]')) return true;
     const relevant = (node) => node.nodeType === 1 &&
-      (node.matches?.(USER_BUBBLE) || node.querySelector?.(USER_BUBBLE) ||
+      (node.matches?.("main") || node.querySelector?.("main") ||
+       node.matches?.(USER_BUBBLE) || node.querySelector?.(USER_BUBBLE) ||
        node.matches?.(".turn-action-controls") || node.querySelector?.(".turn-action-controls") ||
        node.matches?.('[role="menu"]') || node.querySelector?.('[role="menu"]') ||
        node.matches?.('link[rel="modulepreload"]'));
@@ -1978,6 +2050,22 @@
   };
 
   workEditor = createWorkEditor();
+  // A companion may use these shared mechanisms, but is never required.
+  if (typeof dispatchEvent === "function" && typeof CustomEvent === "function") {
+    dispatchEvent(new CustomEvent("chatgpt-version-arrows:connect", { detail: (initialize) => {
+      if (companion || typeof initialize !== "function") return;
+      try {
+        companion = initialize(Object.freeze({
+          USER_BUBBLE, ASSISTANT_MESSAGE, readContext, conversationKey, conversationBusy,
+          graphFor, hydrateGraph, requestSwitch, clientText, getFiber, currentFiber, isShell, schedule,
+          watchActivity: (context) => watchConversationActivity(context, pass),
+          isStopped: () => stopped, testMode: TEST_MODE,
+        })) ?? null;
+      } catch (error) {
+        warnOnce("companion-failed", "An optional panel could not be started.", { error: String(error) });
+      }
+    } }));
+  }
 
   if (document.documentElement) observe();
   else {
@@ -2003,9 +2091,11 @@
     if (frame !== null) cancelAnimationFrame(frame);
     observer?.disconnect();
     rootObserver?.disconnect();
+    stopWorkspaceWatch();
     releaseActivityWatches(-1);
     releaseNativeButtons(-1);
     workEditor?.stop();
+    callCompanion("stop");
     if (historyRegistration && historyRegistration.candidate.C === historyRegistration.register) {
       historyRegistration.candidate.C = historyRegistration.original;
     }
