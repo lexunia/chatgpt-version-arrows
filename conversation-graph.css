@@ -204,11 +204,15 @@ header[data-version-graph-header] {
   overflow: hidden;
   border: 1px solid var(--color-border, var(--color-border-primary-outline));
   border-radius: var(--radius-2xl, 16px);
+  box-shadow: var(--shadow-dropdown-overlay, var(--shadow-xl, none));
   font-family: inherit;
   font-size: 14px;
   line-height: 22px;
   text-align: start;
   cursor: pointer;
+}
+.version-graph-card[data-role="user"] {
+  border-color: transparent;
 }
 .version-graph-card[data-role="assistant"] {
   background: var(--composer-background-color, var(--color-surface-elevated, transparent));
