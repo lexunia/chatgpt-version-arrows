@@ -9,6 +9,16 @@
   transition: width 180ms ease;
 }
 .version-graph-dock[data-version-graph-open] { width: var(--version-graph-width); }
+.version-graph-dock[data-version-graph-full-view] {
+  position: fixed;
+  left: var(--version-graph-full-left);
+  top: var(--version-graph-full-top);
+  width: var(--version-graph-full-width);
+  height: var(--version-graph-full-height);
+  z-index: 40;
+  transition: none;
+}
+.version-graph-dock[data-version-graph-full-view] > .version-graph { width: 100%; transition: none; }
 header[data-version-graph-header] {
   right: var(--version-graph-header-reserve, 0px);
   transition: right 180ms ease;
@@ -94,7 +104,6 @@ header[data-version-graph-header] {
   min-height: 44px;
   box-sizing: border-box;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--color-border, var(--color-border-primary-outline));
 }
 
 .version-graph-button {
@@ -114,6 +123,8 @@ header[data-version-graph-header] {
 }
 
 .version-graph-button:disabled { opacity: 0.4; cursor: default; }
+.version-graph-full-view-button { flex-shrink: 0; width: 36px; height: 36px; padding: 0; }
+.version-graph-full-view-button svg { display: block; width: 16px; height: 16px; }
 .version-graph-button:hover:not(:disabled), .version-graph-result:hover {
   background: var(--color-background-primary-ghost-hover);
 }

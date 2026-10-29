@@ -20,6 +20,9 @@
   // Native composer expand/collapse geometry, independent of the icon sprite URL.
   const PREVIEW_EXPAND_PATH = "M7.891 11.185a.666.666 0 1 1 .941.94l-3.047 3.048h2.544a.665.665 0 0 1 0 1.33H4.264a.765.765 0 0 1-.764-.765v-4.063a.665.665 0 0 1 1.33 0v2.571zM15.735 3.505c.422 0 .765.342.765.765v4.063a.665.665 0 0 1-1.33 0V5.762l-3.062 3.061a.667.667 0 0 1-.941-.94l3.048-3.048H11.67a.665.665 0 0 1 0-1.33z";
   const PREVIEW_COLLAPSE_PATH = "M7.833 11.002c.643 0 1.165.521 1.165 1.165v3.667a.665.665 0 0 1-1.33 0v-2.57L4.22 16.718a.665.665 0 1 1-.94-.939l3.439-3.448H4.166a.666.666 0 0 1 0-1.33zM15.778 3.281a.665.665 0 0 1 .943.938l-3.435 3.45h2.548a.666.666 0 0 1 0 1.33h-3.667a1.165 1.165 0 0 1-1.165-1.165V4.167a.665.665 0 0 1 1.33 0v2.575z";
+  // Native workspace full-view control, distinct from composer expansion.
+  const FULL_VIEW_PATH = "M4.6582 7.83984C4.94815 7.83984 5.18359 8.07528 5.18359 8.36523V10.7998H7.67676C7.96671 10.7998 8.20215 11.0352 8.20215 11.3252C8.20215 11.6151 7.96671 11.8506 7.67676 11.8506H4.9082C4.48018 11.8506 4.13281 11.5032 4.13281 11.0752V8.36523C4.13281 8.07528 4.36825 7.83984 4.6582 7.83984Z M11.0918 4.14941C11.5197 4.14955 11.8672 4.49687 11.8672 4.9248V7.63477C11.8672 7.92463 11.6316 8.16002 11.3418 8.16016C11.0518 8.16016 10.8164 7.92472 10.8164 7.63477V5.2002H8.32324C8.03329 5.2002 7.79785 4.96475 7.79785 4.6748C7.79785 4.38486 8.03329 4.14941 8.32324 4.14941H11.0918Z";
+  const EXIT_FULL_VIEW_PATH = "M6.75391 8.48828C7.18193 8.48828 7.5293 8.83565 7.5293 9.26367V11.9736C7.5293 12.2636 7.29386 12.499 7.00391 12.499C6.71396 12.499 6.47852 12.2636 6.47852 11.9736V9.53906H3.98535C3.6954 9.53906 3.45996 9.30362 3.45996 9.01367C3.45996 8.72372 3.6954 8.48828 3.98535 8.48828H6.75391Z M8.99609 3.50098C9.28604 3.50098 9.52148 3.73642 9.52148 4.02637V6.46094H12.0146C12.3046 6.46094 12.54 6.69638 12.54 6.98633C12.54 7.27628 12.3046 7.51172 12.0146 7.51172H9.24609C8.81807 7.51172 8.4707 7.16435 8.4707 6.73633V4.02637C8.4707 3.73642 8.70614 3.50098 8.99609 3.50098Z";
 
   const previewIntlFor = (element) => {
     for (let host = element, n = 0; host && n < 8; host = host.parentElement, n++) {
@@ -617,6 +620,8 @@
       fit: ["artifactTab.preview.zoomToFit", "Zoom to fit"],
       expand: ["chatgptConversations.composer.expand", "Expand"],
       collapse: ["chatgptConversations.composer.collapse", "Collapse"],
+      fullView: ["threadWorkspace.layout.enterFullView", "Enter full view"],
+      exitFullView: ["threadWorkspace.layout.exitFullView", "Exit full view"],
       noResults: ["settings.search.noResults", "No results"],
       close: ["common.close", "Close"],
     };
@@ -624,6 +629,7 @@
     let dock = null, nativeHeader = null, toggleSlot = null, toolbar = null, exportControls = null;
     let viewport, canvas, cards, lines, search, results, detail, detailText, detailGrip, detailActions, expand, go, status, zoomLabel, grip;
     let detailDate, expandPath, timestampCache = null;
+    let fullViewButton, fullViewPath, fullView = false;
     let overview, overviewEdges, overviewBranch, overviewUsers, overviewAnswers, overviewFrame, overviewView = null;
     let branchState = null, overviewBranchState = null;
     let open = false, width = 440, scale = 0.8, offsetX = 0, offsetY = 0, selected = null, expanded = false;
@@ -975,13 +981,57 @@
       if (toggle.parentElement !== parent) open ? parent.prepend(toggle) : parent.append(toggle);
       toggleSlot.hidden = open || !graphChatPage();
     };
-    const applyWidth = () => {
-      width = clampWidth(width);
-      dock?.style.setProperty("--version-graph-width", `${width}px`);
-      nativeHeader?.style.setProperty("--version-graph-header-reserve", open ? `${width}px` : "0px");
+    const applyWidth = (conversion) => {
+      if (fullView) {
+        // Main excludes the native left sidebar and includes its workspace
+        // panels. Fixed overlay coordinates must use local CSS units too.
+        const rect = host.getBoundingClientRect(), units = conversion ?? clientUnits();
+        for (const [key, value] of Object.entries({ left: rect.left * units.x, top: rect.top * units.y,
+          width: rect.width * units.x, height: rect.height * units.y })) {
+          dock.style.setProperty(`--version-graph-full-${key}`, `${value}px`);
+        }
+      } else {
+        width = clampWidth(width);
+        dock?.style.setProperty("--version-graph-width", `${width}px`);
+      }
+      nativeHeader?.style.setProperty("--version-graph-header-reserve", open && !fullView ? `${width}px` : "0px");
+      if (grip) grip.hidden = fullView;
+      if (fullView) return;
       grip?.setAttribute("aria-valuenow", String(Math.round(width)));
       grip?.setAttribute("aria-valuemin", String(Math.round(Math.min(240, width))));
       grip?.setAttribute("aria-valuemax", String(Math.round(clampWidth(Infinity))));
+    };
+    const renderFullViewControl = () => {
+      label(fullViewButton, text(fullView ? "exitFullView" : "fullView"));
+      fullViewButton.setAttribute("aria-pressed", String(fullView));
+      const path = fullView ? EXIT_FULL_VIEW_PATH : FULL_VIEW_PATH;
+      if (fullViewPath.getAttribute("d") !== path) fullViewPath.setAttribute("d", path);
+    };
+    const guardFullViewFocus = (event) => {
+      if (!fullView || !host?.contains(event.target) || !(event.target instanceof Element)) return;
+      const cover = dock.getBoundingClientRect(), target = event.target.getBoundingClientRect();
+      // The underlying chat stays mounted for its history owner. Skip focus
+      // behind the overlay while keeping native controls left of it available.
+      if (target.right > cover.left && target.left < cover.right && target.bottom > cover.top && target.top < cover.bottom) {
+        fullViewButton.focus({ preventScroll: true });
+      }
+    };
+    const toggleFullView = () => {
+      const before = viewportSize(), units = clientUnits();
+      pointerUp();
+      // Full/docked mode switches are immediate. Read the final layout before
+      // restoring resize animation, so center preservation uses the final width.
+      dock.style.transition = "none";
+      fullView = !fullView;
+      dock.toggleAttribute("data-version-graph-full-view", fullView);
+      if (fullView) document.addEventListener("focusin", guardFullViewFocus, true);
+      else document.removeEventListener("focusin", guardFullViewFocus, true);
+      applyWidth(units); applyDetailHeight();
+      const after = viewportSize();
+      dock.style.removeProperty("transition");
+      offsetX += (after.width - before.width) / 2;
+      offsetY += (after.height - before.height) / 2;
+      renderFullViewControl(); requestPaint();
     };
     const resetConversationView = () => {
       selected = ownerId = null;
@@ -1013,7 +1063,7 @@
       return { x: Number.isFinite(x) && x > 0 ? x : 1, y: Number.isFinite(y) && y > 0 ? y : 1 };
     };
     const beginInteraction = (event, mode) => {
-      if (event.button !== 0 || interaction) return;
+      if (event.button !== 0 || interaction || (fullView && mode === "resize")) return;
       interaction = { mode, pointerId: event.pointerId, capture: event.currentTarget, units: clientUnits(),
         x: event.clientX, y: event.clientY, offsetX, offsetY, width, height: parseFloat(detail?.style.height) || 0 };
       interaction.capture.setPointerCapture?.(event.pointerId);
@@ -1173,6 +1223,15 @@
           return { context, conversationId: conversationKey(context), graph: graphFor(context), title: document.title };
         } });
       } }));
+      fullViewButton = button(toolbar, "fullView", "⛶", toggleFullView, true);
+      fullViewButton.classList.add("version-graph-full-view-button");
+      const fullViewIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [name, value] of Object.entries({ viewBox: "0 0 16 16", fill: "currentColor", "aria-hidden": "true", focusable: "false" })) {
+        fullViewIcon.setAttribute(name, value);
+      }
+      fullViewPath = document.createElementNS(fullViewIcon.namespaceURI, "path");
+      fullViewIcon.append(fullViewPath); fullViewButton.replaceChildren(fullViewIcon);
+      renderFullViewControl();
       detail = make("div", "version-graph-detail", panel); detail.hidden = true;
       detailGrip = make("div", "version-graph-detail-resize", detail); detailGrip.tabIndex = 0;
       detailGrip.setAttribute("role", "separator"); detailGrip.setAttribute("aria-orientation", "horizontal");
@@ -1207,6 +1266,7 @@
       go = make("button", "version-graph-button version-graph-go", detailActions); go.type = "button"; go.textContent = "Go to message";
       go.addEventListener("click", async () => {
         if (!selected || !owner || navigating || !currentOwner() || conversationBusy(owner)) return;
+        if (fullView) toggleFullView();
         const requestedOwner = owner, requestedId = selected;
         const lifetime = panelLifetime;
         navigating = true;
@@ -1230,7 +1290,7 @@
       grip.setAttribute("aria-label", "Resize sidebar"); grip.setAttribute("aria-valuemin", "240"); grip.tabIndex = 0;
       grip.addEventListener("pointerdown", (event) => beginInteraction(event, "resize"));
       grip.addEventListener("keydown", (event) => {
-        if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+        if (fullView || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         width += event.key === "ArrowLeft" ? 24 : -24; applyWidth(); event.preventDefault();
       });
       viewport.addEventListener("pointerdown", pointerDown);
@@ -1276,6 +1336,7 @@
       applyWidth();
     };
     const destroyPanel = () => {
+      document.removeEventListener("focusin", guardFullViewFocus, true);
       panelLifetime?.abort();
       panelLifetime = null;
       navigating = false;
@@ -1292,6 +1353,7 @@
       host?.removeAttribute("data-version-graph-host");
       if (nativeHeader?.style.getPropertyValue("--version-graph-header-reserve")) nativeHeader.style.setProperty("--version-graph-header-reserve", "0px");
       dock = toolbar = panel = null;
+      fullViewButton = fullViewPath = null; fullView = false;
       viewport = canvas = cards = lines = search = results = detail = detailText = null;
       detailGrip = detailActions = expand = go = status = zoomLabel = grip = null;
       detailDate = expandPath = timestampCache = null;
@@ -1431,6 +1493,7 @@
       else if (statusKind === "waiting" || statusKind === "partial") setStatus(null);
       // Expanded state is translated separately from the fixed button labels.
       renderExpandControl();
+      renderFullViewControl();
     }
     const onResize = () => { if (panel) { applyWidth(); syncDetailTypography(); applyDetailHeight(); requestPaint(); } };
     addEventListener("hashchange", schedule);
