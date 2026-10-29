@@ -17,6 +17,51 @@
   const CARD = Object.freeze({ width: 256, height: 128 });
   const ROW_STEP = CARD.height + 48;
   const COLUMN_STEP = CARD.width + 32;
+  // Native composer expand/collapse geometry, independent of the icon sprite URL.
+  const PREVIEW_EXPAND_PATH = "M7.891 11.185a.666.666 0 1 1 .941.94l-3.047 3.048h2.544a.665.665 0 0 1 0 1.33H4.264a.765.765 0 0 1-.764-.765v-4.063a.665.665 0 0 1 1.33 0v2.571zM15.735 3.505c.422 0 .765.342.765.765v4.063a.665.665 0 0 1-1.33 0V5.762l-3.062 3.061a.667.667 0 0 1-.941-.94l3.048-3.048H11.67a.665.665 0 0 1 0-1.33z";
+  const PREVIEW_COLLAPSE_PATH = "M7.833 11.002c.643 0 1.165.521 1.165 1.165v3.667a.665.665 0 0 1-1.33 0v-2.57L4.22 16.718a.665.665 0 1 1-.94-.939l3.439-3.448H4.166a.666.666 0 0 1 0-1.33zM15.778 3.281a.665.665 0 0 1 .943.938l-3.435 3.45h2.548a.666.666 0 0 1 0 1.33h-3.667a1.165 1.165 0 0 1-1.165-1.165V4.167a.665.665 0 0 1 1.33 0v2.575z";
+
+  const previewIntlFor = (element) => {
+    for (let host = element, n = 0; host && n < 8; host = host.parentElement, n++) {
+      const key = getFiber(host);
+      for (let fiber = currentFiber(key ? host[key] : null), depth = 0; fiber && depth < 100; fiber = fiber.return, depth++) {
+        const value = fiber.memoizedProps?.value;
+        if (typeof value?.formatDate === "function") return value;
+        for (let context = fiber.dependencies?.firstContext; context; context = context.next) {
+          if (typeof context.memoizedValue?.formatDate === "function") return context.memoizedValue;
+        }
+      }
+    }
+    return null;
+  };
+
+  const previewTimestamp = (seconds, intl, locale) => {
+    if (!Number.isFinite(seconds)) return null;
+    const date = new Date(seconds * 1000);
+    if (!Number.isFinite(date.getTime())) return null;
+    try {
+      // Match the native timestamp separator's calendar-day rules and message IDs.
+      const now = new Date();
+      const dayNumber = value => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
+      const days = Math.max(dayNumber(now) - dayNumber(date), 0);
+      const formatDate = options => intl?.formatDate(date, options) ?? new Intl.DateTimeFormat(locale, options).format(date);
+      let day;
+      if (days <= 1) {
+        day = intl?.formatRelativeTime?.(-days, "day", { numeric: "auto" }) ??
+          new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(-days, "day");
+        if (locale.startsWith("en")) day = day.charAt(0).toUpperCase() + day.slice(1);
+      } else day = formatDate(days <= 7 ? { weekday: "long" } : days <= 365
+        ? { weekday: "short", month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+      const options = { hour: "numeric", minute: "2-digit" };
+      const time = intl?.formatTime?.(date, options) ?? new Intl.DateTimeFormat(locale, options).format(date);
+      const descriptor = days > 7
+        ? { id: "conversation.timestampSeparator.older", defaultMessage: "<day>{date}</day> at {time}" }
+        : { id: "conversation.timestampSeparator.recent", defaultMessage: "<day>{date}</day> {time}" };
+      const caption = intl?.formatMessage?.(descriptor, { date: day, time, day: chunks => chunks.join("") });
+      return { iso: date.toISOString(), caption: typeof caption === "string" ? caption : `${day} ${time}`,
+        full: new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "long" }).format(date) };
+    } catch { return { iso: date.toISOString(), caption: date.toISOString(), full: date.toISOString() }; }
+  };
 
   // A tidy tree packs neighbouring subtree contours at each depth, instead of
   // reserving a column for every leaf. Threads and deferred shifts keep the
@@ -570,14 +615,15 @@
       search: ["browserPluginSettings.search", "Search"],
       zoomIn: ["browserSidebar.zoomBanner.zoomIn", "Zoom in"], zoomOut: ["browserSidebar.zoomBanner.zoomOut", "Zoom out"],
       fit: ["artifactTab.preview.zoomToFit", "Zoom to fit"],
-      more: ["annotationCommentEditor.metadata.showMore", "Show more"],
-      less: ["annotationCommentEditor.metadata.showLess", "Show less"],
+      expand: ["chatgptConversations.composer.expand", "Expand"],
+      collapse: ["chatgptConversations.composer.collapse", "Collapse"],
       noResults: ["settings.search.noResults", "No results"],
       close: ["common.close", "Close"],
     };
     let panel = null, toggle = null, host = null, owner = null, view = null, source = null, ownerId = null;
     let dock = null, nativeHeader = null, toggleSlot = null, toolbar = null, exportControls = null;
     let viewport, canvas, cards, lines, search, results, detail, detailText, detailGrip, detailActions, expand, go, status, zoomLabel, grip;
+    let detailDate, expandPath, timestampCache = null;
     let overview, overviewEdges, overviewBranch, overviewUsers, overviewAnswers, overviewFrame, overviewView = null;
     let branchState = null, overviewBranchState = null;
     let open = false, width = 440, scale = 0.8, offsetX = 0, offsetY = 0, selected = null, expanded = false;
@@ -609,12 +655,12 @@
       parent?.append(element);
       return element;
     };
-    const button = (parent, key, glyph, action) => {
+    const button = (parent, key, glyph, action, dynamic = false) => {
       const element = make("button", "version-graph-button", parent);
       element.type = "button";
       if (glyph) { const icon = make("span", "", element); icon.textContent = glyph; icon.setAttribute("aria-hidden", "true"); }
       element.addEventListener("click", action);
-      boundLabels.push({ element, key, content: !glyph });
+      if (!dynamic) boundLabels.push({ element, key, content: !glyph });
       return element;
     };
     const currentOwner = () => sameGraphOwner(owner, activeGraphContext());
@@ -647,14 +693,45 @@
       offsetY = (size.height - view.height * scale) / 2;
       requestPaint();
     };
+    const renderDetailInfo = () => {
+      if (!view?.nodes.has(selected)) {
+        detailDate.hidden = true; detailDate.textContent = "";
+        detailDate.removeAttribute("datetime"); detailDate.removeAttribute("title");
+        timestampCache = null;
+        return;
+      }
+      const graph = graphFor(owner);
+      const live = graph?.liveMapping?.[selected]?.message?.create_time;
+      const seconds = Number.isFinite(live) ? live : graph?.batchMapping?.[selected]?.message?.create_time;
+      const intl = previewIntlFor(owner.element);
+      const locale = intl?.locale || document.documentElement.lang || navigator.language || "en";
+      const day = new Date().toDateString();
+      if (timestampCache && timestampCache.seconds === seconds && timestampCache.intl === intl &&
+          timestampCache.locale === locale && timestampCache.day === day) return;
+      const timestamp = previewTimestamp(seconds, intl, locale);
+      timestampCache = { seconds, intl, locale, day };
+      detailDate.hidden = !timestamp;
+      label(detailDate, timestamp?.caption ?? "", true);
+      if (timestamp) {
+        if (detailDate.dateTime !== timestamp.iso) detailDate.dateTime = timestamp.iso;
+        if (detailDate.title !== timestamp.full) detailDate.title = timestamp.full;
+      } else { detailDate.removeAttribute("datetime"); detailDate.removeAttribute("title"); }
+    };
+    const renderExpandControl = () => {
+      expand.setAttribute("aria-expanded", String(expanded));
+      expand.setAttribute("aria-pressed", String(expanded));
+      label(expand, text(expanded ? "collapse" : "expand"));
+      const path = expanded ? PREVIEW_COLLAPSE_PATH : PREVIEW_EXPAND_PATH;
+      if (expandPath.getAttribute("d") !== path) expandPath.setAttribute("d", path);
+    };
     const renderDetail = () => {
       const node = view?.nodes.get(selected);
       detail.hidden = !node;
+      renderDetailInfo();
       if (!node) { detailText.replaceChildren(); return; }
       if (detailText.textContent !== node.text) detailText.textContent = node.text;
       detailText.classList.toggle("is-expanded", expanded);
-      expand.setAttribute("aria-expanded", String(expanded));
-      label(expand, text(expanded ? "less" : "more"), true);
+      renderExpandControl();
       syncDetailTypography(); applyDetailHeight();
     };
     const syncDetailTypography = () => {
@@ -1106,6 +1183,15 @@
       });
       detailText = make("div", "version-graph-detail-text", detail);
       detailActions = make("div", "version-graph-actions", detail);
+      detailDate = make("time", "version-graph-message-date", detailActions);
+      expand = button(detail, "expand", "↗", () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); }, true);
+      expand.classList.add("version-graph-detail-expand");
+      const expandIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      for (const [name, value] of Object.entries({ viewBox: "0 0 20 20", fill: "currentColor", "aria-hidden": "true", focusable: "false" })) {
+        expandIcon.setAttribute(name, value);
+      }
+      expandPath = document.createElementNS(expandIcon.namespaceURI, "path");
+      expandIcon.append(expandPath); expand.replaceChildren(expandIcon);
       const closePreview = button(detail, "close", "×", () => clearSelection(true));
       closePreview.classList.add("version-graph-detail-close");
       // Native xmark-md-light-16 geometry, independent of the text baseline.
@@ -1115,7 +1201,6 @@
       const closePath = document.createElementNS(closeIcon.namespaceURI, "path");
       closePath.setAttribute("d", "M10.962 4.295a.525.525 0 0 1 .742.743L8.742 7.999l2.963 2.963a.526.526 0 0 1-.742.743L8 8.742l-2.963 2.963a.525.525 0 0 1-.742-.743L7.258 8 4.296 5.038a.525.525 0 1 1 .742-.743L8 7.257z");
       closeIcon.append(closePath); closePreview.replaceChildren(closeIcon);
-      expand = button(detailActions, "more", null, () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); });
       go = make("button", "version-graph-button version-graph-go", detailActions); go.type = "button"; go.textContent = "Go to message";
       go.addEventListener("click", async () => {
         if (!selected || !owner || navigating || !currentOwner() || conversationBusy(owner)) return;
@@ -1206,6 +1291,7 @@
       dock = toolbar = panel = null;
       viewport = canvas = cards = lines = search = results = detail = detailText = null;
       detailGrip = detailActions = expand = go = status = zoomLabel = grip = null;
+      detailDate = expandPath = timestampCache = null;
       overview = overviewEdges = overviewBranch = overviewUsers = overviewAnswers = overviewFrame = null;
       boundLabels.length = 0; interaction = null;
       viewportControls.length = 0;
@@ -1337,11 +1423,11 @@
       }
       syncCurrentBranch(graph);
       go.disabled = navigating || conversationBusy(context);
-      if (selected) { syncDetailTypography(); applyDetailHeight(); }
+      if (selected) { renderDetailInfo(); syncDetailTypography(); applyDetailHeight(); }
       if (!graph.authoritative) setStatus("partial", "Showing loaded history. Reopen the chat to load the full graph.");
       else if (statusKind === "waiting" || statusKind === "partial") setStatus(null);
       // Expanded state is translated separately from the fixed button labels.
-      label(expand, text(expanded ? "less" : "more"), true);
+      renderExpandControl();
     }
     const onResize = () => { if (panel) { applyWidth(); syncDetailTypography(); applyDetailHeight(); requestPaint(); } };
     addEventListener("hashchange", schedule);
