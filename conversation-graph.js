@@ -634,7 +634,7 @@
     let branchState = null, overviewBranchState = null;
     let open = false, width = 440, scale = 0.8, offsetX = 0, offsetY = 0, selected = null, expanded = false;
     let paintFrame = null, resizeObserver = null, interaction = null, navigating = false, resultLimit = 100;
-    let detailHeight = null, typographyObserver = null;
+    let detailHeight = null, detailLineHeight = 0, typographyObserver = null;
     let searchQuery = "", closedLabelKey = null, lastPage = location.pathname + location.hash;
     let searchResultsOpen = false;
     let panelLifetime = null, viewBuild = null, statusKind = null;
@@ -740,22 +740,27 @@
       renderExpandControl();
       syncDetailTypography(); applyDetailHeight();
     };
+    const textLineHeight = style => parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 13) * 1.5;
     const syncDetailTypography = () => {
       if (!owner || !detailText || !view?.nodes.has(selected)) return;
-      const selector = view.nodes.get(selected).role === "user" ? USER_BUBBLE : ASSISTANT_MESSAGE;
-      const message = [...owner.main.querySelectorAll(selector)].find(graphElementVisible) ?? owner.element;
-      const content = message.querySelector('[class*="MarkdownRoot-"], .markdown, .prose') ?? message;
-      const style = getComputedStyle(content);
+      const styles = [USER_BUBBLE, ASSISTANT_MESSAGE].map(selector => {
+        const message = [...owner.main.querySelectorAll(selector)].find(graphElementVisible) ?? owner.element;
+        const content = message.querySelector('[class*="MarkdownRoot-"], .markdown, .prose') ?? message;
+        return getComputedStyle(content);
+      });
+      // Keep the window stable across roles without changing their native text styles.
+      detailLineHeight = Math.max(...styles.map(textLineHeight));
+      const style = styles[view.nodes.get(selected).role === "user" ? 0 : 1];
       for (const property of ["fontFamily", "fontSize", "lineHeight", "letterSpacing"]) {
         if (detailText.style[property] !== style[property]) detailText.style[property] = style[property];
       }
     };
     const detailLimits = () => {
       const style = getComputedStyle(detailText);
-      const line = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 13) * 1.5;
+      const line = textLineHeight(style);
       const available = Math.max(0, panel.clientHeight - (toolbar.offsetHeight || 52) - status.offsetHeight);
       const maximum = Math.max(0, available - 80);
-      const minimum = Math.min(maximum, Math.ceil(line * 3 + 8 + (detailActions.offsetHeight || 50) + 8 + 1));
+      const minimum = Math.min(maximum, Math.ceil(Math.max(line, detailLineHeight) * 3 + 8 + (detailActions.offsetHeight || 50) + 8 + 1));
       return { line, minimum, maximum, expanded: Math.max(minimum, Math.min(maximum, available / 2)) };
     };
     const applyDetailHeight = () => {
@@ -1357,6 +1362,7 @@
       viewport = canvas = cards = lines = search = results = detail = detailText = null;
       detailGrip = detailActions = expand = go = status = zoomLabel = grip = null;
       detailDate = expandPath = timestampCache = null;
+      detailLineHeight = 0;
       overview = overviewEdges = overviewBranch = overviewUsers = overviewAnswers = overviewFrame = null;
       boundLabels.length = 0; interaction = null;
       viewportControls.length = 0;
