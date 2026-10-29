@@ -324,23 +324,22 @@ header[data-version-graph-header] {
 }
 .version-graph-detail-close,
 .version-graph-detail-expand {
-  position: absolute;
-  inset-inline-end: 8px;
   width: 32px;
   height: 32px;
   min-width: 32px;
   min-height: 32px;
+  flex-shrink: 0;
   border-radius: 50%;
   padding: 0;
 }
-.version-graph-detail-close { inset-block-start: 8px; }
-.version-graph-detail-expand { inset-block-start: 44px; }
+.version-graph-detail-close { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; }
 .version-graph-detail-expand svg { display: block; width: 20px; height: 20px; }
 .version-graph-close-icon { display: block; flex-shrink: 0; width: 16px; height: 16px; }
 .version-graph-detail-text.is-expanded { overflow: auto; overscroll-behavior: contain; }
-.version-graph-actions { justify-content: space-between; flex-wrap: wrap; }
+.version-graph-actions { justify-content: space-between; }
+.version-graph-detail-info { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; }
 .version-graph-message-date {
-  flex: 1 1 120px;
+  flex: 1 1 auto;
   min-width: 0;
   font-size: var(--text-xs, 12px);
   line-height: 1.4;
@@ -349,7 +348,7 @@ header[data-version-graph-header] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.version-graph-actions .version-graph-go { margin-inline-start: auto; }
+.version-graph-actions .version-graph-go { flex-shrink: 0; margin-inline-start: auto; }
 .version-graph-status { flex-shrink: 0; margin: 0; padding: 0 16px 10px; color: var(--color-text-tertiary); }
 .version-graph-status:empty { display: none; }
 .version-graph-empty { color: var(--color-text-tertiary); padding: 8px; }

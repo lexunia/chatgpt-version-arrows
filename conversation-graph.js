@@ -1183,8 +1183,8 @@
       });
       detailText = make("div", "version-graph-detail-text", detail);
       detailActions = make("div", "version-graph-actions", detail);
-      detailDate = make("time", "version-graph-message-date", detailActions);
-      expand = button(detail, "expand", "↗", () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); }, true);
+      const detailInfo = make("div", "version-graph-detail-info", detailActions);
+      expand = button(detailInfo, "expand", "↗", () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); }, true);
       expand.classList.add("version-graph-detail-expand");
       const expandIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       for (const [name, value] of Object.entries({ viewBox: "0 0 20 20", fill: "currentColor", "aria-hidden": "true", focusable: "false" })) {
@@ -1192,6 +1192,7 @@
       }
       expandPath = document.createElementNS(expandIcon.namespaceURI, "path");
       expandIcon.append(expandPath); expand.replaceChildren(expandIcon);
+      detailDate = make("time", "version-graph-message-date", detailInfo);
       const closePreview = button(detail, "close", "×", () => clearSelection(true));
       closePreview.classList.add("version-graph-detail-close");
       // Native xmark-md-light-16 geometry, independent of the text baseline.
