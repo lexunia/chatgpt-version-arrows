@@ -962,10 +962,12 @@
       const surface = nativeHeader.querySelector('[data-testid="app-shell-header-context-menu-surface"]');
       let trailing = surface?.nextElementSibling;
       if (trailing === toggleSlot) trailing = trailing.nextElementSibling;
-      const viewer = [...host.querySelectorAll('[data-testid="viewer-header"]')].find(graphElementVisible);
-      // AppShell reserves the viewer's width in the trailing titlebar cell.
-      // Keep our slot on the chat side of that cell, away from viewer actions.
-      const before = viewer && trailing?.parentElement === nativeHeader ? trailing : null;
+      // The native end slot reserves all right workspace panels, including a
+      // Work side chat. Stay beside the main-chat actions even when it is empty.
+      const reserved = [...nativeHeader.children].find(child => child.getAttribute("data-app-shell-header-slot") === "end");
+      // Older AppShell builds expose only the viewer's trailing reservation.
+      const viewer = !reserved && [...host.querySelectorAll('[data-testid="viewer-header"]')].find(graphElementVisible);
+      const before = reserved ?? (viewer && trailing?.parentElement === nativeHeader ? trailing : null);
       if (before) {
         if (toggleSlot.nextElementSibling !== before) nativeHeader.insertBefore(toggleSlot, before);
       } else if (nativeHeader.lastElementChild !== toggleSlot) nativeHeader.append(toggleSlot);
