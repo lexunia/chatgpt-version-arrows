@@ -1215,14 +1215,6 @@
       viewportControls.push(button(tools, "zoomIn", "+", () => zoom(scale * 1.2)));
       viewportControls.push(button(tools, "fit", "⛶", fit));
       for (const control of viewportControls) control.disabled = !view;
-      dispatchEvent(new CustomEvent("chatgpt-version-arrows:export-connect", { detail: (create) => {
-        if (exportControls) return;
-        exportControls = create({ parent: toolbar, api, read: () => {
-          const context = activeGraphContext();
-          if (!open || !sameGraphOwner(owner, context) || conversationBusy(context)) throw new Error("Conversation unavailable");
-          return { context, conversationId: conversationKey(context), graph: graphFor(context), title: document.title };
-        } });
-      } }));
       fullViewButton = button(toolbar, "fullView", "⛶", toggleFullView, true);
       fullViewButton.classList.add("version-graph-full-view-button");
       const fullViewIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1232,6 +1224,14 @@
       fullViewPath = document.createElementNS(fullViewIcon.namespaceURI, "path");
       fullViewIcon.append(fullViewPath); fullViewButton.replaceChildren(fullViewIcon);
       renderFullViewControl();
+      dispatchEvent(new CustomEvent("chatgpt-version-arrows:export-connect", { detail: (create) => {
+        if (exportControls) return;
+        exportControls = create({ parent: toolbar, api, read: () => {
+          const context = activeGraphContext();
+          if (!open || !sameGraphOwner(owner, context) || conversationBusy(context)) throw new Error("Conversation unavailable");
+          return { context, conversationId: conversationKey(context), graph: graphFor(context), title: document.title };
+        } });
+      } }));
       detail = make("div", "version-graph-detail", panel); detail.hidden = true;
       detailGrip = make("div", "version-graph-detail-resize", detail); detailGrip.tabIndex = 0;
       detailGrip.setAttribute("role", "separator"); detailGrip.setAttribute("aria-orientation", "horizontal");
