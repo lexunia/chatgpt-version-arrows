@@ -670,8 +670,7 @@
     const detailLimits = () => {
       const style = getComputedStyle(detailText);
       const line = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 13) * 1.5;
-      const available = Math.max(0, panel.clientHeight - (toolbar.offsetHeight || 52) -
-        (results.hidden ? 0 : results.offsetHeight) - status.offsetHeight);
+      const available = Math.max(0, panel.clientHeight - (toolbar.offsetHeight || 52) - status.offsetHeight);
       const maximum = Math.max(0, available - 80);
       const minimum = Math.min(maximum, Math.ceil(line * 3 + 8 + (detailActions.offsetHeight || 50) + 8 + 1));
       return { line, minimum, maximum, expanded: Math.max(minimum, Math.min(maximum, available / 2)) };
@@ -1032,7 +1031,7 @@
           dismissSearch(); event.preventDefault(); event.stopPropagation();
         }
       });
-      results = make("div", "version-graph-results", panel); results.hidden = true;
+      results = make("div", "version-graph-results", toolbar); results.hidden = true;
       viewport = make("div", "version-graph-viewport", panel);
       viewport.setAttribute("aria-label", "Conversation graph");
       viewport.tabIndex = 0;
