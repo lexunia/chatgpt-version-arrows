@@ -299,6 +299,8 @@ header[data-version-graph-header] {
   text-box: trim-both cap alphabetic;
 }
 .version-graph-detail {
+  --version-graph-detail-button-size: calc(var(--spacing, .25rem) * 8);
+  --version-graph-detail-icon-size: calc(var(--spacing, .25rem) * 5);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -322,35 +324,53 @@ header[data-version-graph-header] {
   border-radius: 2px;
   background: var(--color-border, var(--color-border-primary-outline));
 }
+.version-graph-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 calc(var(--spacing, .25rem) * 10);
+  box-sizing: border-box;
+  padding: 0 8px 0 16px;
+}
+.version-graph-detail-role {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.version-graph-detail-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .version-graph-detail-text {
   display: block;
   flex: 1 1 0;
   overflow: hidden;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  margin: 8px 16px 0;
-  margin-inline-end: 44px;
+  margin: 4px 16px 0;
   min-height: 0;
   user-select: text;
 }
 .version-graph-detail-close,
 .version-graph-detail-expand {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  min-height: 32px;
+  width: var(--version-graph-detail-button-size);
+  height: var(--version-graph-detail-button-size);
+  min-width: var(--version-graph-detail-button-size);
+  min-height: var(--version-graph-detail-button-size);
   flex-shrink: 0;
   border-radius: 50%;
   padding: 0;
 }
-.version-graph-detail-close { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; }
-.version-graph-detail-expand svg { display: block; width: 20px; height: 20px; }
-.version-graph-close-icon { display: block; flex-shrink: 0; width: 16px; height: 16px; }
+.version-graph-detail-expand svg,
+.version-graph-detail-close svg { display: block; width: var(--version-graph-detail-icon-size); height: var(--version-graph-detail-icon-size); }
+.version-graph-close-icon { flex-shrink: 0; }
 .version-graph-detail-text.is-expanded { overflow: auto; overscroll-behavior: contain; }
 .version-graph-actions { justify-content: space-between; }
-.version-graph-detail-info { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; }
+.version-graph-detail-info { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; overflow: hidden; }
+.version-graph-message-model,
 .version-graph-message-date {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--text-xs, 12px);
   line-height: 1.4;
@@ -359,6 +379,7 @@ header[data-version-graph-header] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.version-graph-message-date:not([hidden]) + .version-graph-message-model::before { content: "·"; margin-inline-end: 8px; }
 .version-graph-actions .version-graph-go { flex-shrink: 0; margin-inline-start: auto; }
 .version-graph-status { flex-shrink: 0; margin: 0; padding: 0 16px 10px; color: var(--color-text-tertiary); }
 .version-graph-status:empty { display: none; }

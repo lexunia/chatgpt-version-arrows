@@ -43,27 +43,67 @@
     const date = new Date(seconds * 1000);
     if (!Number.isFinite(date.getTime())) return null;
     try {
-      // Match the native timestamp separator's calendar-day rules and message IDs.
-      const now = new Date();
-      const dayNumber = value => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()) / 86400000;
-      const days = Math.max(dayNumber(now) - dayNumber(date), 0);
-      const formatDate = options => intl?.formatDate(date, options) ?? new Intl.DateTimeFormat(locale, options).format(date);
-      let day;
-      if (days <= 1) {
-        day = intl?.formatRelativeTime?.(-days, "day", { numeric: "auto" }) ??
-          new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(-days, "day");
-        if (locale.startsWith("en")) day = day.charAt(0).toUpperCase() + day.slice(1);
-      } else day = formatDate(days <= 7 ? { weekday: "long" } : days <= 365
-        ? { weekday: "short", month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
-      const options = { hour: "numeric", minute: "2-digit" };
-      const time = intl?.formatTime?.(date, options) ?? new Intl.DateTimeFormat(locale, options).format(date);
-      const descriptor = days > 7
-        ? { id: "conversation.timestampSeparator.older", defaultMessage: "<day>{date}</day> at {time}" }
-        : { id: "conversation.timestampSeparator.recent", defaultMessage: "<day>{date}</day> {time}" };
-      const caption = intl?.formatMessage?.(descriptor, { date: day, time, day: chunks => chunks.join("") });
-      return { iso: date.toISOString(), caption: typeof caption === "string" ? caption : `${day} ${time}`,
+      // Use native menu templates, keeping a calendar date even for recent messages.
+      const otherYear = date.getFullYear() !== new Date().getFullYear();
+      const options = { month: "short", day: "numeric", ...(otherYear ? { year: "numeric" } : {}), hour: "numeric", minute: "2-digit" };
+      let caption;
+      if (otherYear) {
+        const parts = intl?.formatDateToParts?.(date, options) ?? new Intl.DateTimeFormat(locale, options).formatToParts(date);
+        const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+        const descriptor = values.dayPeriod
+          ? { id: "datetime.compact", defaultMessage: "{month} {day} {year}, {hour}:{minute} {dayPeriod}" }
+          : { id: "datetime.compact.24h", defaultMessage: "{month} {day} {year}, {hour}:{minute}" };
+        caption = intl?.formatMessage?.(descriptor, values);
+      } else {
+        const dateOptions = { month: "short", day: "numeric" }, timeOptions = { hour: "numeric", minute: "2-digit" };
+        const day = intl?.formatDate?.(date, dateOptions) ?? new Intl.DateTimeFormat(locale, dateOptions).format(date);
+        const time = intl?.formatTime?.(date, timeOptions) ?? new Intl.DateTimeFormat(locale, timeOptions).format(date);
+        caption = intl?.formatMessage?.({ id: "conversation-turn.timestamp-label", defaultMessage: "{date}, {time}" }, { date: day, time });
+      }
+      return { iso: date.toISOString(), caption: typeof caption === "string" ? caption : new Intl.DateTimeFormat(locale, options).format(date),
         full: new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "long" }).format(date) };
     } catch { return { iso: date.toISOString(), caption: date.toISOString(), full: date.toISOString() }; }
+  };
+
+  const previewModelCaption = (metadata, scope) => {
+    const text = value => typeof value === "string" && value.trim() ? value.trim() : null;
+    const slug = text(metadata?.model_slug) ?? text(metadata?.resolved_model_slug);
+    if (!slug) return "";
+    const effortKey = value => text(value) === "none" ? null : text(value);
+    const effort = effortKey(metadata.thinking_effort);
+    const join = (model, label) => !label || model.toLowerCase().endsWith(` ${label.toLowerCase()}`) ||
+      model.toLowerCase() === label.toLowerCase() ? model : `${model} ${label}`;
+    const prefix = caption => /^\d/.test(caption) ? `GPT-${caption}` : caption;
+    let title = null, effortLabel = null;
+    try {
+      // Use the owner's already-loaded Chat/Work catalogs; never request another one.
+      const client = scope?.queryClient ?? scope?.node?.queryClient;
+      const queries = client?.getQueryCache?.()?.getAll?.();
+      for (const query of Array.isArray(queries) ? queries : []) {
+        const catalog = query.state?.data;
+        if (!catalog || typeof catalog !== "object") continue;
+        for (const group of [catalog, ...(Array.isArray(catalog.versionOptions) ? catalog.versionOptions : [])]) {
+          for (const option of Array.isArray(group?.options) ? group.options : []) {
+            if (option?.slug !== slug || effortKey(option.thinkingEffort) !== effort) continue;
+            const version = text(option.selectedDisplayVersion), label = text(option.selectedLabel);
+            if (version && label) return prefix(join(version, label));
+          }
+        }
+        const config = catalog.modelConfigBySlug?.[slug];
+        title ??= text(config?.title);
+        const levels = config?.thinkingEfforts;
+        effortLabel ??= text(Array.isArray(levels) ? levels.find(level => effortKey(level?.thinking_effort) === effort)?.short_label : null);
+      }
+    } catch { /* Missing client catalogs must not prevent viewing the message. */ }
+    if (!title) {
+      const match = /^gpt-(\d+(?:[.-]\d+)*)(?:[-.](.+))?$/i.exec(slug);
+      if (match) {
+        const name = (match[2] ?? "").replace(/(?:^|-)wm$/i, "").split("-").filter(Boolean)
+          .map(part => part[0].toUpperCase() + part.slice(1)).join(" ");
+        title = prefix(join(match[1].replaceAll("-", "."), name));
+      } else title = slug;
+    }
+    return effortLabel ? join(title, effortLabel) : effort ? `${title} (${effort})` : title;
   };
 
   // A tidy tree packs neighbouring subtree contours at each depth, instead of
@@ -628,7 +668,7 @@
     let panel = null, toggle = null, host = null, owner = null, view = null, source = null, ownerId = null;
     let dock = null, nativeHeader = null, toggleSlot = null, toolbar = null, exportControls = null;
     let viewport, canvas, cards, lines, search, results, detail, detailText, detailGrip, detailActions, expand, go, status, zoomLabel, grip;
-    let detailDate, expandPath, timestampCache = null;
+    let detailHeader, detailRole, detailModel, detailDate, expandPath, timestampCache = null;
     let fullViewButton, fullViewPath, fullView = false;
     let overview, overviewEdges, overviewBranch, overviewUsers, overviewAnswers, overviewFrame, overviewView = null;
     let branchState = null, overviewBranchState = null;
@@ -700,15 +740,24 @@
       requestPaint();
     };
     const renderDetailInfo = () => {
-      if (!view?.nodes.has(selected)) {
+      const node = view?.nodes.get(selected);
+      label(detailRole, node ? node.role === "user" ? "User" : "ChatGPT" : "", true);
+      if (!node) {
+        detailModel.hidden = true; detailModel.textContent = ""; detailModel.removeAttribute("title");
         detailDate.hidden = true; detailDate.textContent = "";
         detailDate.removeAttribute("datetime"); detailDate.removeAttribute("title");
         timestampCache = null;
         return;
       }
       const graph = graphFor(owner);
-      const live = graph?.liveMapping?.[selected]?.message?.create_time;
-      const seconds = Number.isFinite(live) ? live : graph?.batchMapping?.[selected]?.message?.create_time;
+      const saved = graph?.batchMapping?.[selected]?.message;
+      const live = graph?.liveMapping?.[selected]?.message;
+      const caption = node.role === "assistant"
+        ? previewModelCaption({ ...saved?.metadata, ...live?.metadata }, owner.scope) : "";
+      detailModel.hidden = !caption;
+      label(detailModel, caption, true);
+      if (detailModel.title !== caption) detailModel.title = caption;
+      const seconds = Number.isFinite(live?.create_time) ? live.create_time : saved?.create_time;
       const intl = previewIntlFor(owner.element);
       const locale = intl?.locale || document.documentElement.lang || navigator.language || "en";
       const day = new Date().toDateString();
@@ -760,7 +809,8 @@
       const line = textLineHeight(style);
       const available = Math.max(0, panel.clientHeight - (toolbar.offsetHeight || 52) - status.offsetHeight);
       const maximum = Math.max(0, available - 80);
-      const minimum = Math.min(maximum, Math.ceil(Math.max(line, detailLineHeight) * 3 + 8 + (detailActions.offsetHeight || 50) + 8 + 1));
+      const minimum = Math.min(maximum, Math.ceil(Math.max(line, detailLineHeight) * 3 +
+        (detailHeader.offsetHeight || 40) + 8 + (detailActions.offsetHeight || 50) + 8 + 1));
       return { line, minimum, maximum, expanded: Math.max(minimum, Math.min(maximum, available / 2)) };
     };
     const applyDetailHeight = () => {
@@ -1247,10 +1297,13 @@
         resizeDetail(parseFloat(detail.style.height) + (event.key === "ArrowUp" ? 1 : -1) * detailLimits().line);
         event.preventDefault();
       });
+      detailHeader = make("div", "version-graph-detail-header", detail);
+      detailRole = make("span", "version-graph-detail-role", detailHeader);
+      const detailControls = make("div", "version-graph-detail-controls", detailHeader);
       detailText = make("div", "version-graph-detail-text", detail);
       detailActions = make("div", "version-graph-actions", detail);
       const detailInfo = make("div", "version-graph-detail-info", detailActions);
-      expand = button(detailInfo, "expand", "↗", () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); }, true);
+      expand = button(detailControls, "expand", "↗", () => { expanded = !expanded; detailHeight = null; renderDetail(); requestPaint(); }, true);
       expand.classList.add("version-graph-detail-expand");
       const expandIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       for (const [name, value] of Object.entries({ viewBox: "0 0 20 20", fill: "currentColor", "aria-hidden": "true", focusable: "false" })) {
@@ -1259,14 +1312,15 @@
       expandPath = document.createElementNS(expandIcon.namespaceURI, "path");
       expandIcon.append(expandPath); expand.replaceChildren(expandIcon);
       detailDate = make("time", "version-graph-message-date", detailInfo);
-      const closePreview = button(detail, "close", "×", () => clearSelection(true));
+      detailModel = make("span", "version-graph-message-model", detailInfo);
+      const closePreview = button(detailControls, "close", "×", () => clearSelection(true));
       closePreview.classList.add("version-graph-detail-close");
-      // Native xmark-md-light-16 geometry, independent of the text baseline.
+      // Native xmark-lg-light-20, from the same 20-unit set as preview expansion.
       const closeIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      for (const [name, value] of Object.entries({ viewBox: "0 0 16 16", fill: "currentColor",
+      for (const [name, value] of Object.entries({ viewBox: "0 0 20 20", fill: "currentColor",
         "aria-hidden": "true", focusable: "false", class: "version-graph-close-icon" })) closeIcon.setAttribute(name, value);
       const closePath = document.createElementNS(closeIcon.namespaceURI, "path");
-      closePath.setAttribute("d", "M10.962 4.295a.525.525 0 0 1 .742.743L8.742 7.999l2.963 2.963a.526.526 0 0 1-.742.743L8 8.742l-2.963 2.963a.525.525 0 0 1-.742-.743L7.258 8 4.296 5.038a.525.525 0 1 1 .742-.743L8 7.257z");
+      closePath.setAttribute("d", "M14.78 4.279a.667.667 0 0 1 .94.941L10.942 10l4.78 4.779a.666.666 0 0 1-.942.941L10 10.941l-4.779 4.78a.666.666 0 0 1-.94-.942l4.778-4.78L4.28 5.22a.667.667 0 0 1 .941-.941L10 9.059z");
       closeIcon.append(closePath); closePreview.replaceChildren(closeIcon);
       go = make("button", "version-graph-button version-graph-go", detailActions); go.type = "button"; go.textContent = "Go to message";
       go.addEventListener("click", async () => {
@@ -1361,7 +1415,7 @@
       fullViewButton = fullViewPath = null; fullView = false;
       viewport = canvas = cards = lines = search = results = detail = detailText = null;
       detailGrip = detailActions = expand = go = status = zoomLabel = grip = null;
-      detailDate = expandPath = timestampCache = null;
+      detailHeader = detailRole = detailModel = detailDate = expandPath = timestampCache = null;
       detailLineHeight = 0;
       overview = overviewEdges = overviewBranch = overviewUsers = overviewAnswers = overviewFrame = null;
       boundLabels.length = 0; interaction = null;
@@ -1512,7 +1566,7 @@
     const controller = createConversationGraph();
     if (api.testMode) globalThis.__chatgptConversationGraphTest = {
       graphMessageText, graphOverviewGeometry, graphOverviewTarget, createMessageGraphView, createViewBuild, graphViewportItems, currentBranchPaths, activeGraphContext,
-      messageScroller, navigateGraphMessage, focusGraphMessage,
+      messageScroller, navigateGraphMessage, focusGraphMessage, previewModelCaption,
       reconcileGraph: controller.reconcile,
     };
     return {
