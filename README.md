@@ -34,6 +34,19 @@ If Chrome reports that the manifest is missing or unreadable, you selected the w
 
 ## Changelog
 
+### 0.7.0 Beta 14 — Conversation graph (AppShell)
+
+- Full conversation graph with all user messages, assistant responses, and branches.
+- `Go to message` lets you jump to **any message across all branches**, switching the chat’s current branch and saving your selection on the server.
+- Search across all messages and branches, with navigation to results in the graph.
+- Message previews with dates and model information when available, in an expandable, resizable panel.
+- Highlighting for the selected message and the current branch.
+- Resizable right sidebar, with an option to expand the graph to the full workspace.
+- Zoom with the mouse wheel or buttons, pan the graph, and navigate using the interactive minimap.
+- Full conversation tree export (JSON).
+- Current branch export (JSON).
+- Current branch export as clean text with USER/ASSISTANT labels.
+
 ### 0.6.3
 
 - Adds user-prompt editing to Work conversations in AppShell.
