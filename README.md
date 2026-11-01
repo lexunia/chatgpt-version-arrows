@@ -8,7 +8,9 @@
   >
 </p>
 
-This Chrome extension restores the previous/next version arrows for edited messages and regenerated responses, so you can switch between versions directly in the conversation. Works with both ChatGPT's classic web client and the newer AppShell client.
+This Chrome extension restores the previous/next version arrows for edited messages and regenerated responses, so you can switch between versions directly in the conversation. It also provides a full conversation graph with all messages and branches.
+
+To open the conversation graph in AppShell, click the **sidebar icon in the top-right corner of the conversation**.
 
 > [!IMPORTANT]
 > **AppShell remembers your selected branch.** Switching versions uses the client’s native navigation, which saves the selected branch on the server even without sending a message. Unlike in the classic client, this selection persists when you reopen the chat or use another device. Before leaving, switch back to the branch you want to keep active.
@@ -20,13 +22,12 @@ This Chrome extension restores the previous/next version arrows for edited messa
 3. When the download finishes, open your Downloads folder.
 4. Right-click the downloaded ZIP file and select **Extract All**.
 5. Move the extracted `chatgpt-version-arrows-main` folder to a permanent location where you will not delete or move it later.
-6. Open the extracted folder and make sure it contains `manifest.json`, `patch.js`, `app-shell-pagination.js`, and `app-shell-pagination.css`.
-7. Open Chrome and enter `chrome://extensions` in the address bar.
-8. Enable **Developer mode** in the top-right corner.
-9. Click **Load unpacked**.
-10. Select the extracted folder that directly contains `manifest.json`. Do not select the ZIP file, the `assets` folder, or a parent folder.
-11. Make sure the extension appears on the Extensions page and is enabled.
-12. Reload every open ChatGPT tab with `F5`.
+6. Open Chrome and enter `chrome://extensions` in the address bar.
+7. Enable **Developer mode** in the top-right corner.
+8. Click **Load unpacked**.
+9. Select the extracted folder that directly contains `manifest.json`. Do not select the ZIP file, the `assets` folder, or a parent folder.
+10. Make sure the extension appears on the Extensions page and is enabled.
+11. Reload every open ChatGPT tab with `F5`.
 
 > Keep the extracted folder after installation. Chrome loads the extension directly from that location. If you delete, rename, or move the folder, the extension may stop working and will need to be loaded again.
 
