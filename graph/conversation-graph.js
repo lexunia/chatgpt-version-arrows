@@ -663,6 +663,7 @@
       fullView: ["threadWorkspace.layout.enterFullView", "Enter full view"],
       exitFullView: ["threadWorkspace.layout.exitFullView", "Exit full view"],
       noResults: ["settings.search.noResults", "No results"],
+      more: ["sidebarElectron.showMore", "Show more"],
       close: ["common.close", "Close"],
     };
     let panel = null, toggle = null, host = null, owner = null, view = null, source = null, ownerId = null;

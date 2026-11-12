@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 4";
+  const VERSION = "0.7.1 Beta 5";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -34,6 +34,7 @@
   const activityWatches = new Set();
   const disabledNativeButtons = new Map();
   const guardedNativeButtons = new WeakSet();
+  const replacedNativeVersions = new Map();
   const conversationErrors = new Map();
   const attemptedRuntimeUrls = new Set();
   const warned = new Set();
@@ -1022,14 +1023,22 @@
     return true;
   };
 
-  const suppressNativeVersions = (root, details = {}) => {
+  const replaceNativeVersions = (root, currentPass, details) => {
     for (const button of root.querySelectorAll("button")) {
       if (nativeActionFor(button) !== "versions") continue;
-      button.setAttribute("data-batch-native-action", "versions");
-      if (!button.hasAttribute("data-batch-pagination-suppressed")) {
-        button.setAttribute("data-batch-pagination-suppressed", "");
+      replacedNativeVersions.set(button, currentPass);
+      if (button.getAttribute("data-batch-native-action") !== "versions") {
+        button.setAttribute("data-batch-native-action", "versions");
         if (diagnostics) record("native-versions-suppressed", details);
       }
+    }
+  };
+
+  const releaseNativeVersions = (currentPass) => {
+    for (const [button, seen] of replacedNativeVersions) {
+      if (seen === currentPass && button.isConnected) continue;
+      button.removeAttribute("data-batch-native-action");
+      replacedNativeVersions.delete(button);
     }
   };
 
@@ -1196,26 +1205,22 @@
   const paintAssistantPagination = (message, context, graph, row, currentPass, busy) => {
     const messageId = message.getAttribute("data-chatgpt-selection-message-id");
     if (!messageId) return false;
-    suppressNativeVersions(row, { role: "assistant", messageId });
     const ids = assistantVariants(graph, messageId);
     const index = ids.indexOf(messageId);
     const native = nativeAssistantPaginationFor(row);
     let controls = row.querySelector(ASSISTANT_CONTROLS);
     if (native) {
       blockNativeAssistantButtons(native, message, busy, currentPass);
-      if (busy) {
-        // The cached graph may not yet contain the new streaming response.
-        // Do not hide native arrows as "phantom" while its state is changing.
-        controls?.remove();
-        return false;
+      // A partial or changing graph cannot establish that the native pair is spurious.
+      if (!busy || !graph?.authoritative) {
+        const phantom = !!graph?.authoritative && ids.length < 2;
+        if (phantom !== native.hasAttribute("data-batch-pagination-suppressed")) {
+          native.toggleAttribute("data-batch-pagination-suppressed", phantom);
+          if (diagnostics) record(phantom ? "phantom-assistant-pagination-suppressed" : "assistant-pagination-restored", { messageId });
+        }
       }
-      const phantom = ids.length < 2;
-      if (phantom && !native.hasAttribute("data-batch-pagination-suppressed")) {
-        native.setAttribute("data-batch-pagination-suppressed", "");
-        if (diagnostics) record("phantom-assistant-pagination-suppressed", { messageId });
-      } else if (!phantom && native.hasAttribute("data-batch-pagination-suppressed")) {
-        native.removeAttribute("data-batch-pagination-suppressed");
-        if (diagnostics) record("assistant-pagination-restored", { messageId });
+      if (graph?.authoritative && activityAdapter && ids.length >= 2 && !native.hasAttribute("data-batch-pagination-suppressed")) {
+        replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
       }
       controls?.remove();
       return false;
@@ -1284,7 +1289,12 @@
       if (!busy && !hydrateGraph(context, graph)) continue;
       const row = assistantActionRowFor(message);
       if (!row) continue;
-      if (paintAssistantPagination(message, context, graph, row, currentPass, busy)) painted++;
+      if (paintAssistantPagination(message, context, graph, row, currentPass, busy)) {
+        painted++;
+        if (graph?.authoritative && switcher && activityAdapter) {
+          replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
+        }
+      }
     }
     return painted;
   };
@@ -1935,6 +1945,7 @@
       for (const info of document.querySelectorAll(MODEL_INFO)) info.remove();
       releaseActivityWatches(currentPass);
       releaseNativeButtons(currentPass);
+      releaseNativeVersions(currentPass);
       trimGraphs();
       callCompanion("reconcile");
       return;
@@ -1952,7 +1963,6 @@
     for (const bubble of bubbles) {
       const mountInfo = findMount(bubble);
       if (!mountInfo) continue;
-      suppressNativeVersions(mountInfo.row, { role: "user" });
       const context = readContext(bubble);
       if (!context) continue;
       watchConversationActivity(context, currentPass);
@@ -1960,13 +1970,19 @@
       const busy = conversationBusy(context);
       if (!graph && !busy) continue;
       if (!busy && !hydrateGraph(context, graph)) continue;
-      if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) painted++;
+      if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) {
+        painted++;
+        if (graph?.authoritative && switcher && activityAdapter) {
+          replaceNativeVersions(mountInfo.row, currentPass, { role: "user", messageId: context.messageId });
+        }
+      }
     }
     const assistantPainted = reconcileAssistantPagination(currentPass);
     reconcileModelInfoMenus();
     callCompanion("reconcile");
     releaseActivityWatches(currentPass);
     releaseNativeButtons(currentPass);
+    releaseNativeVersions(currentPass);
     for (const controls of document.querySelectorAll(CONTROLS)) {
       if (controls.dataset.pass !== String(currentPass)) controls.remove();
     }
@@ -2103,6 +2119,7 @@
     stopWorkspaceWatch();
     releaseActivityWatches(-1);
     releaseNativeButtons(-1);
+    releaseNativeVersions(-1);
     workEditor?.stop();
     callCompanion("stop");
     if (historyRegistration && historyRegistration.candidate.C === historyRegistration.register) {
@@ -2132,7 +2149,6 @@
       nativeActionFor,
       nativeAssistantPaginationFor,
       resolveNativeIcons,
-      suppressNativeVersions,
       updateControlLabels,
       graphFor,
       graphSummary,
