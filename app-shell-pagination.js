@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.0 Beta 14";
+  const VERSION = "0.7.1 Beta 1";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1034,12 +1034,19 @@
   };
 
   const assistantActionRowFor = (message) => {
+    const turn = message.closest("[data-talvt-turn-state]");
     let element = message.parentElement;
     for (let depth = 0; element && depth < 10; depth++, element = element.parentElement) {
-      if (element.querySelectorAll(ASSISTANT_MESSAGE).length !== 1) continue;
-      for (const row of element.querySelectorAll(".turn-action-controls")) {
-        if (nativeButtonFor(row, "regenerate")) return row;
+      if (element.querySelectorAll(ASSISTANT_MESSAGE).length === 1) {
+        const rows = [...element.querySelectorAll(".turn-action-controls")];
+        const standalone = rows.find((row) => nativeButtonFor(row, "regenerate"));
+        if (standalone) return standalone;
+        // Newer clients put regenerate inside the assistant's action menu.
+        const menuRows = rows.filter((row) =>
+          nativeButtonFor(row, "more")?.getAttribute("aria-haspopup") === "menu");
+        if (menuRows.length) return menuRows.length === 1 ? menuRows[0] : null;
       }
+      if (element === turn) break;
     }
     return null;
   };
@@ -1327,10 +1334,12 @@
     nativeIcons = resolveNativeIcons(runtime);
   };
 
+  // The full endpoint can be delegated. The initial response is still handled
+  // by the loader itself, unlike callers that just request forceFull.
   const isHistoryLoaderSource = (source) => source.includes("forceFull") &&
-    source.includes("/conversations/{conversation_id}") &&
-    source.includes("/conversation/{conversation_id}") &&
-    source.includes("include_has_versions");
+    /(["'])\/conversations\/\{conversation_id\}\1/.test(source) &&
+    source.includes("include_has_versions") &&
+    (source.includes("initialResponse") || /(["'])\/conversation\/\{conversation_id\}\1/.test(source));
 
   const captureFullHistory = (payload, conversationId, scope) => {
     const expectedId = conversationKey({ conversationId, scope });
