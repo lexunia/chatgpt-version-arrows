@@ -34,7 +34,10 @@ header[data-version-graph-header] {
   align-items: center;
   justify-content: flex-start;
 }
-.version-graph-toggle-slot[hidden] { display: none; }
+.version-graph-toggle-slot[hidden],
+header[data-version-graph-header] > [data-app-shell-main-titlebar]:is([aria-hidden="true"], [inert]) ~ .version-graph-toggle-slot {
+  display: none;
+}
 
 [data-version-graph-toggle] {
   display: inline-flex;
