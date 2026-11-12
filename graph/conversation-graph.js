@@ -563,7 +563,8 @@
         const handle = messageScroller(active.element);
         if (handle && !attempted.has(handle)) {
           attempted.add(handle);
-          await handle.scrollToMessage(messageId);
+          try { await handle.scrollToMessage(messageId); }
+          catch { /* A mounted message can still be reached directly. */ }
         }
         if (!isCurrent() || done) return finish(false);
         for (const element of active.main.querySelectorAll(`${USER_BUBBLE}, ${ASSISTANT_MESSAGE}`)) {
