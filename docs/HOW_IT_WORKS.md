@@ -1,6 +1,6 @@
 # How It Works
 
-Technical details for ChatGPT Version Arrows. For installation and the current version summary, see the [README](README.md).
+Technical details for ChatGPT Version Arrows. For installation and the current version summary, see the [README](../README.md).
 
 ## Loading the extension
 
@@ -32,7 +32,7 @@ The response contains the full message `mapping` with `parent`/`children` links,
 
 ### Native history loader
 
-The extension wraps ChatGPT's native conversation loader to set `forceFull: true` in its options. The wrapper captures the loader's full graph and combines it with the corresponding live AppScope state.
+The extension identifies ChatGPT's native conversation loader by its `forceFull` option and the paginated history request. The full request can sit in the loader itself or in a helper. The wrapper sets `forceFull: true` and combines the resulting graph with the conversation's live AppScope state.
 
 Temporary AppShell chats use the same full-history path. Other caller options, including `isTemporaryChat`, are passed through to the loader.
 
@@ -42,11 +42,13 @@ Partial graphs recovered from AppScope provide read-only input for version detec
 
 The native full-history loader is the adapter's single source of full graphs.
 
-The graph is held in page memory. Reloading the page discards that state; the next conversation load populates it again.
+The conversation history stays in page memory for the arrows, even with the graph panel closed. The cache targets three conversations and can temporarily hold more while entries are in use. Reloading the page clears the cache.
 
 ### Version arrows and branch selection
 
 The adapter adds compact previous/next controls to the existing message action rows. When AppShell already renders valid native response arrows, the extension leaves them in place. It supplies matching arrows when the native controls are missing and removes false version controls when the visible graph contains only one real response.
+
+The assistant's action row is identified by its native regenerate button or its **More actions** trigger, depending on where the client puts regeneration.
 
 Version switching calls ChatGPT's native branch-switching function. That function saves the selected message through:
 
@@ -89,9 +91,13 @@ When no matching catalog label exists, the internal model slug is formatted and 
 
 Catalog labels can differ from the final localized labels in the native model selector. The added caption uses the client's theme color for message-date descriptions.
 
-## Classic client
+## Conversation graph and export
 
-The classic client uses ChatGPT's original version-arrow components. The extension restores them by normalizing the relevant bootstrap configuration before the frontend reads it.
+The graph panel uses the same history as the arrows. It builds the layout when opened and renders cards around the visible area. Closing the panel releases the layout. Selecting a card opens a preview; **Go to message** uses the same branch switcher as the arrows, then scrolls to the message.
+
+Export is available once the full history is loaded and the conversation is idle. It reads the active branch from ChatGPT and prepares the full tree as JSON, the active branch as JSON, or the active branch as plain text. The file is prepared in chunks and handed to the browser for download.
+
+## Shared configuration
 
 ### Early config hooks
 
@@ -112,49 +118,6 @@ bootstrap
 
 Matching objects are processed through their `layer_configs` and `dynamic_configs` containers. A nested `statsigPayload` is processed as an object or a serialized JSON string.
 
-After the matching config is normalized, the classic frontend renders and operates its own native previous/next version arrows.
-
-### Message-version loading rollout
-
-An observed classic-client rollout is controlled by this bootstrap layer:
-
-```js
-layer_configs["2605344799"].value.num_turns
-```
-
-An observed affected value is:
-
-```js
-{
-  "2605344799": {
-    value: {
-      num_turns: 10,
-    },
-    parameter_rule_ids: {
-      num_turns: "shippedValues:chatgpt-web-paginated-messages-rollout",
-    },
-  },
-}
-```
-
-With a positive `num_turns` value, the affected classic frontend selects:
-
-```txt
-/backend-api/conversations/<conversation_id>?include_has_versions=true&num_turns=10
-```
-
-This endpoint returns a `messages` payload and handles message versions separately.
-
-Message versions can be requested separately through:
-
-```txt
-/backend-api/conversations/<conversation_id>/versions?message_id=<message_id>
-```
-
-The extension changes `num_turns` to `0` before ChatGPT reads the config. In the affected classic frontend, `0` selects the full-history endpoint described above and restores the original loading and branch-navigation path.
-
-The extension also removes `num_turns` from `explicit_parameters` when present.
-
 ### Edit-version experiments
 
 The shared config patch looks for ChatGPT bootstrap/config objects with this edited-message control shape:
@@ -171,7 +134,7 @@ The shared config patch looks for ChatGPT bootstrap/config objects with this edi
 
 Observed fields:
 
-- `variant_modal`: opens older edited-message versions in a modal with a **Branch in new chat** action.
+- `variant_modal`: optional. Opens older edited-message versions in a modal with a **Branch in new chat** action and is set to `false` when present.
 - `hide_pagination`: older experiment flag. When `true`, ChatGPT hides the usual previous/next version arrows for edited messages.
 - `edit_actions_treatment`: older experiment treatment string. Observed affected values were `"warning"` and `"branch_prefill"`.
 - `edit_buttons_hidden`: edit-control visibility flag. The default value is `false`.
@@ -189,7 +152,7 @@ When that shape is found, the value is normalized to the original version-arrow 
 }
 ```
 
-For known affected experiment configs, metadata is also normalized:
+Each experiment config the patch changes gets this metadata:
 
 ```js
 group_name: "Control"
@@ -206,7 +169,21 @@ Observed affected experiments:
 | `3879630193` | `Warning` | `hide_pagination`, `edit_actions_treatment` | Hides the edited-message version arrows and applies the warning treatment. |
 | `3879348497` | `Branch Prefill` | `hide_pagination`, `edit_actions_treatment` | Hides the edited-message version arrows and applies the branch-prefill treatment. |
 
-Edit-version experiment configs are matched by the field shape shown above, with known experiment ids as secondary markers. The classic conversation-loading rollout is matched separately by the exact `2605344799` layer id and its numeric `num_turns` value.
+The patch recognizes affected configs by the field shape above. For known experiment IDs, `hide_pagination` and `edit_actions_treatment` are enough to identify the config.
+
+## Classic client
+
+The classic client renders its own version arrows using the normalized settings above. Its history loader is controlled by the numeric `num_turns` value in layer `2605344799`.
+
+With a positive `num_turns` value, the affected classic frontend loads a page of messages, for example:
+
+```txt
+/backend-api/conversations/<conversation_id>?include_has_versions=true&num_turns=10
+```
+
+It requests versions separately through `/backend-api/conversations/<conversation_id>/versions?message_id=<message_id>`.
+
+The patch sets `num_turns` to `0` and removes it from `explicit_parameters` when present. This selects the full-history endpoint and restores the classic branch-navigation path.
 
 ## Compatibility and limitations
 
