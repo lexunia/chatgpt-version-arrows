@@ -10,12 +10,13 @@ The extension is loaded at `document_start` on:
 https://chatgpt.com/*
 ```
 
-Both JavaScript content scripts run in the page's `MAIN` world:
+The JavaScript content scripts run in the page's `MAIN` world. The manifest loads them in this order:
 
 - `patch.js` handles the shared configuration patch and classic-client behavior.
-- `app-shell-pagination.js` handles AppShell history, version arrows, model captions, and Work prompt editing.
+- `graph/` contains the message text and branch helpers, followed by the export controls and graph sidebar. These use the AppShell adapter's conversation data.
+- `app-shell/app-shell-pagination.js` handles AppShell history, version arrows, model captions, and Work prompt editing.
 
-`app-shell-pagination.css` styles the added controls using the client's theme.
+The styles live alongside their scripts in `app-shell/` and `graph/` and use the client's theme.
 
 ## Full conversation history
 
@@ -64,7 +65,7 @@ The native AppShell edit path blocks user-prompt editing in Work (`tpp`) at two 
 - The conversation page omits `onEditUserMessage` for Work, so the message actions have no edit button.
 - The normal Chat edit handler rejects `tpp` conversations with `Work messages cannot be edited with the Chat flow.`
 
-The Work editor in `app-shell-pagination.js` supplies `onEditUserMessage` through a wrapper around the native message-action builder, connecting the existing edit button and prompt editor. On save, it builds the edited message with the client's message builder and sends it through `submitChatGPTCompletion`, carrying the target's parent, model, reasoning effort, system hints, and attachments. This uses the Work submission flow instead of the blocked Chat edit handler. The resulting version is handled by the existing graph and version arrows.
+The Work editor in `app-shell/app-shell-pagination.js` supplies `onEditUserMessage` through a wrapper around the native message-action builder, connecting the existing edit button and prompt editor. On save, it builds the edited message with the client's message builder and sends it through `submitChatGPTCompletion`, carrying the target's parent, model, reasoning effort, system hints, and attachments. This uses the Work submission flow instead of the blocked Chat edit handler. The resulting version is handled by the existing graph and version arrows.
 
 The editor uses the AppShell adapter's ownership and busy checks and rechecks the target before submission. It connects to editable, non-shared, non-temporary Work views where the native edit callback is absent.
 
