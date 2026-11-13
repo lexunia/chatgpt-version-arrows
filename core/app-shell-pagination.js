@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 7";
+  const VERSION = "0.7.1 Beta 9";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -76,6 +76,7 @@
   let stopped = false;
   let pass = 0;
   let graphRevision = 0;
+  let historySequence = 0;
   let historyRegistration = null;
   let workEditor = null;
   let companion = null;
@@ -582,21 +583,21 @@
   const ownsGraph = (context, graph) => graph?.conversationId === conversationKey(context);
 
   const nativeConversationBusy = (scope, conversationId) => {
-    if (!activityAdapter) return true;
+    if (!activityAdapter) return null;
     try {
       const busy = activityAdapter.read(scope, conversationId);
-      return typeof busy === "boolean" ? busy : true;
+      return typeof busy === "boolean" ? busy : null;
     } catch {
-      return true;
+      return null;
     }
   };
 
-  const conversationBusy = (context) => {
+  const conversationActivity = (context) => {
     const id = conversationKey(context);
-    return pendingConversations.has(id) || historyLoads.has(id) ||
-      historyLoads.has(context.conversationId) ||
-      nativeConversationBusy(context.scope, context.conversationId);
+    if (pendingConversations.has(id) || historyLoads.has(id) || historyLoads.has(context.conversationId)) return true;
+    return nativeConversationBusy(context.scope, context.conversationId);
   };
+  const conversationBusy = (context) => conversationActivity(context) !== false;
 
   const watchConversationActivity = (context, currentPass) => {
     const owner = context.scope.node ?? context.scope;
@@ -654,7 +655,7 @@
         button.addEventListener("click", (event) => {
           const owner = controlMessages.get(button);
           const context = owner?.isConnected ? readContext(owner) : null;
-          if (context && conversationBusy(context)) {
+          if (context && conversationActivity(context) === true) {
             event.preventDefault();
             event.stopImmediatePropagation();
           }
@@ -670,7 +671,7 @@
             if (stopped || button.disabled || !disabledNativeButtons.has(button)) return;
             const owner = controlMessages.get(button);
             const context = button.isConnected && owner?.isConnected ? readContext(owner) : null;
-            if (context && conversationBusy(context)) button.disabled = true;
+            if (context && conversationActivity(context) === true) button.disabled = true;
             else schedule();
           });
           saved = { originalDisabled: button.disabled, pass: currentPass, observer: disabledObserver };
@@ -716,20 +717,21 @@
 
   const discoverScopeAdapter = (context, graph) => {
     const conversationId = conversationKey(context);
+    const families = context.scope.node?.familyBindings;
+    if (!families || typeof families.keys !== "function") return null;
     const cache = adapterCacheFor(context.scope);
     const cached = cache.get(conversationId);
     if (cached) {
       try {
-        context.scope.get(cached.mappingSignal, conversationId);
-        return cached;
-      } catch {
-        cache.delete(conversationId);
-      }
+        const value = cached.familyCount === families.size && families.has(cached.mappingSignal) ?
+          context.scope.get(cached.mappingSignal, conversationId) : null;
+        if (value?.[context.messageId] || (graph?.currentNode && value?.[graph.currentNode])) return cached;
+      } catch { /* The previous binding is no longer usable. */ }
+      cache.delete(conversationId);
     }
     if (diagnostics) diagnostics.scopeScans++;
     let best = null;
-    const families = context.scope.node?.familyBindings;
-    if (!families || typeof families.keys !== "function") return null;
+    let tied = false;
     for (const atom of families.keys()) {
       if (atom?.kind !== "signal-family") continue;
       let value;
@@ -739,11 +741,13 @@
         continue;
       }
       const score = mappingScore(value, graph, context.messageId);
-      if (score < 0 || (best && best.score >= score)) continue;
+      if (score < 0 || (best && best.score > score)) continue;
+      if (best?.score === score) { tied = true; continue; }
       best = { mappingSignal: atom, score };
+      tied = false;
     }
-    if (!best) return null;
-    const adapter = { mappingSignal: best.mappingSignal };
+    if (!best || tied) return null;
+    const adapter = { mappingSignal: best.mappingSignal, familyCount: families.size };
     cache.set(conversationId, adapter);
     if (diagnostics) {
       record("scope-adapter-found", {
@@ -1202,7 +1206,8 @@
     await requestSwitch(context, messageId, target, message);
   };
 
-  const paintAssistantPagination = (message, context, graph, row, currentPass, busy) => {
+  const paintAssistantPagination = (message, context, graph, row, currentPass, activity) => {
+    const busy = activity !== false;
     const messageId = message.getAttribute("data-chatgpt-selection-message-id");
     if (!messageId) return false;
     const ids = assistantVariants(graph, messageId);
@@ -1210,16 +1215,16 @@
     const native = nativeAssistantPaginationFor(row);
     let controls = row.querySelector(ASSISTANT_CONTROLS);
     if (native) {
-      blockNativeAssistantButtons(native, message, busy, currentPass);
+      blockNativeAssistantButtons(native, message, activity === true, currentPass);
       // A partial or changing graph cannot establish that the native pair is spurious.
-      if (!busy || !graph?.authoritative) {
-        const phantom = !!graph?.authoritative && ids.length < 2;
+      if (activity !== true || !graph?.authoritative) {
+        const phantom = activity === false && !!graph?.authoritative && ids.length < 2;
         if (phantom !== native.hasAttribute("data-batch-pagination-suppressed")) {
           native.toggleAttribute("data-batch-pagination-suppressed", phantom);
           if (diagnostics) record(phantom ? "phantom-assistant-pagination-suppressed" : "assistant-pagination-restored", { messageId });
         }
       }
-      if (graph?.authoritative && activityAdapter && ids.length >= 2 && !native.hasAttribute("data-batch-pagination-suppressed")) {
+      if (graph?.authoritative && activity !== null && ids.length >= 2 && !native.hasAttribute("data-batch-pagination-suppressed")) {
         replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
       }
       controls?.remove();
@@ -1284,14 +1289,17 @@
       if (!context) continue;
       watchConversationActivity(context, currentPass);
       const graph = graphFor(context);
-      const busy = conversationBusy(context);
-      if (!graph && !busy) continue;
-      if (!busy && !hydrateGraph(context, graph)) continue;
+      const activity = conversationActivity(context);
+      if (!graph && activity === false) continue;
       const row = assistantActionRowFor(message);
+      if (activity === false && !hydrateGraph(context, graph)) {
+        nativeAssistantPaginationFor(row)?.removeAttribute("data-batch-pagination-suppressed");
+        continue;
+      }
       if (!row) continue;
-      if (paintAssistantPagination(message, context, graph, row, currentPass, busy)) {
+      if (paintAssistantPagination(message, context, graph, row, currentPass, activity)) {
         painted++;
-        if (graph?.authoritative && switcher && activityAdapter) {
+        if (graph?.authoritative && switcher && activity !== null) {
           replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
         }
       }
@@ -1307,13 +1315,17 @@
     }
   };
 
-  const importedExports = (candidate, source, alias) => {
+  const importedModuleId = (source, alias) => {
     const name = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const imports = [...source.matchAll(new RegExp(
       `(?:^|[^$\\w])${name}\\s*=\\s*[$\\w]+\\(\\s*["']([^"']+)["']\\s*\\)`, "g",
     ))];
     const ids = new Set(imports.map((match) => match[1]));
-    return ids.size === 1 ? candidate.c?.[[...ids][0]]?.exports : null;
+    return ids.size === 1 ? ids.values().next().value : null;
+  };
+  const importedExports = (candidate, source, alias) => {
+    const id = importedModuleId(source, alias);
+    return id === null ? null : candidate.c?.[id]?.exports;
   };
 
   const resolveNativeIcons = (candidate) => {
@@ -1351,15 +1363,30 @@
     source.includes("include_has_versions") &&
     (source.includes("initialResponse") || /(["'])\/conversation\/\{conversation_id\}\1/.test(source));
 
-  const captureFullHistory = (payload, conversationId, scope) => {
-    const expectedId = conversationKey({ conversationId, scope });
-    if (!payload?.mapping || typeof payload.mapping !== "object" ||
-        Array.isArray(payload.mapping) ||
+  const isCompleteHistory = (payload, expectedId) => {
+    const mapping = payload?.mapping;
+    if (!expectedId || !mapping || typeof mapping !== "object" || Array.isArray(mapping) ||
         String(payload.conversation_id ?? payload.id ?? "") !== expectedId ||
-        (Object.hasOwn(payload.mapping, `paginated-root:${expectedId}`) ||
-         Object.hasOwn(payload.mapping, `paginated-root:${conversationId}`))) return;
+        (payload.current_node != null && (typeof payload.current_node !== "string" || !Object.hasOwn(mapping, payload.current_node)))) return false;
+    let hasRoot = false;
+    for (const id in mapping) {
+      if (!Object.hasOwn(mapping, id)) continue;
+      const node = mapping[id];
+      if (id.startsWith("paginated-root:") || !node || typeof node !== "object" || !Array.isArray(node.children)) return false;
+      if (node.parent === null) hasRoot = true;
+      else if (typeof node.parent !== "string" || node.parent === id || !Object.hasOwn(mapping, node.parent)) return false;
+      if (node.children.some(child => typeof child !== "string" || child === id || !Object.hasOwn(mapping, child))) return false;
+    }
+    return hasRoot;
+  };
+
+  const captureFullHistory = (payload, conversationId, scope, sequence = 0) => {
+    const expectedId = conversationKey({ conversationId, scope });
+    if (sequence && sequence < (graphs.get(expectedId)?.historySequence ?? 0)) return;
+    if (!isCompleteHistory(payload, expectedId)) return;
     const graph = createGraphState(payload);
     if (!graph) return;
+    graph.historySequence = sequence;
     storeGraph(graph);
     record("full-history-captured", { conversationId });
     schedule();
@@ -1371,16 +1398,15 @@
       if (!isShell() || options === null) {
         return Reflect.apply(original, this, arguments);
       }
+      const loadId = conversationKey({ scope, conversationId });
       const args = [...arguments];
       args[2] = { ...options, forceFull: true };
-      if (args[2].initialResponse?.mapping &&
-          (Object.hasOwn(args[2].initialResponse.mapping, `paginated-root:${conversationId}`) ||
-           Object.hasOwn(args[2].initialResponse.mapping, `paginated-root:${conversationKey({ scope, conversationId })}`))) {
+      if (args[2].initialResponse?.mapping && !isCompleteHistory(args[2].initialResponse, loadId)) {
         // The native loader returns any mapping-shaped initialResponse before
         // checking forceFull. Do not let a provisional slice bypass full load.
         delete args[2].initialResponse;
       }
-      const loadId = conversationKey({ scope, conversationId });
+      const sequence = ++historySequence;
       historyLoads.set(loadId, (historyLoads.get(loadId) ?? 0) + 1);
       schedule();
       const finish = () => {
@@ -1395,7 +1421,7 @@
       if (diagnostics) diagnostics.fullHistoryLoads++;
       return result.then((payload) => {
         try {
-          captureFullHistory(payload, String(conversationId), scope);
+          captureFullHistory(payload, String(conversationId), scope, sequence);
         } catch (error) {
           warnOnce("full-history-capture", "The full history could not be captured for version arrows.", {
             error: String(error),
@@ -1408,7 +1434,7 @@
     return wrapped;
   };
 
-  const wrapHistoryFactory = (factory) => {
+  const wrapHistoryFactory = (factory, confirmLoader) => {
     if (wrappedHistoryFactories.has(factory)) return factory;
     const wrapped = function historyFactory(module, exports, require) {
       const localRequire = function (...args) { return Reflect.apply(require, this, args); };
@@ -1431,6 +1457,7 @@
             replacement = candidate;
             if (typeof candidate === "function" && isHistoryLoaderSource(candidateSource(candidate))) {
               replacement = wrapHistoryLoader(candidate);
+              confirmLoader();
               record("full-history-loader-installed", { exportName: name });
             }
             return replacement;
@@ -1439,6 +1466,7 @@
         for (const [name, candidate] of Object.entries(values ?? {})) {
           if (typeof candidate === "function" && isHistoryLoaderSource(candidateSource(candidate))) {
             nextValues[name] = wrapHistoryLoader(candidate);
+            confirmLoader();
           }
         }
         return require.d(target, nextGetters, nextValues);
@@ -1449,37 +1477,36 @@
     return wrapped;
   };
 
-  const installHistoryFactories = (factories, cache) => {
-    if (!factories) return false;
-    const known = typeof factories.O4 === "function" &&
-      isHistoryLoaderSource(candidateSource(factories.O4));
-    const entries = known ? [["O4", factories.O4]] : Object.entries(factories);
-    for (const [moduleId, factory] of entries) {
-      if (typeof factory !== "function" || !isHistoryLoaderSource(candidateSource(factory))) continue;
+  const installHistoryFactories = (factories, cache, confirmLoader) => {
+    for (const moduleId in factories) {
+      if (!Object.hasOwn(factories, moduleId)) continue;
+      const factory = factories[moduleId];
+      if (typeof factory !== "function" || wrappedHistoryFactories.has(factory) || !isHistoryLoaderSource(candidateSource(factory))) continue;
       if (cache?.[moduleId]) {
         warnOnce("full-history-late", "The history loader was already initialized. Reload with the updated extension to enable full history.");
-        return false;
+        continue;
       }
-      factories[moduleId] = wrapHistoryFactory(factory);
-      record("full-history-factory-installed", { moduleId });
-      return true;
+      factories[moduleId] = wrapHistoryFactory(factory, confirmLoader);
     }
-    return false;
   };
 
   const installFullHistory = (candidate) => {
     if (!isShell() || typeof candidate?.C !== "function" || typeof candidate.d !== "function") return false;
-    if (installHistoryFactories(candidate.m, candidate.c)) return true;
+    let confirmed = false;
     const original = candidate.C;
     const register = function registerHistory(chunk) {
-      if (installHistoryFactories(chunk?.__webpack_modules__, candidate.c)) {
-        if (candidate.C === register) candidate.C = original;
-        historyRegistration = null;
-      }
+      if (!confirmed) installHistoryFactories(chunk?.__webpack_modules__, candidate.c, confirmLoader);
+      else if (candidate.C === register) candidate.C = original;
       return Reflect.apply(original, this, arguments);
+    };
+    const confirmLoader = () => {
+      confirmed = true;
+      if (candidate.C === register) candidate.C = original;
+      if (historyRegistration?.register === register) historyRegistration = null;
     };
     candidate.C = register;
     historyRegistration = { candidate, original, register };
+    installHistoryFactories(candidate.m, candidate.c, confirmLoader);
     return true;
   };
 
@@ -1596,6 +1623,7 @@
     };
     let registration = null;
     let native = null;
+    let factoryScan = null;
 
     const sourceOf = (fn) => typeof fn === "function" ? Function.prototype.toString.call(fn) : "";
     const warn = (message) => {
@@ -1608,12 +1636,21 @@
     const isBuilder = (source) => source.includes("renderedTurns") &&
       /\bisReadOnly:[^{}]*isWorkConversation:[^{}]*onEditUserMessage:[^{}]*timestampSeparatorAtMs:/.test(source);
 
-    const resolveNative = (candidate) => {
-      if (!candidate?.m || !candidate?.c) return null;
-      const factories = Object.values(candidate.m).map(sourceOf)
-        .filter((source) => source.includes("edit_message_unsupported_conversation"));
-      if (factories.length !== 1) return null;
-      const source = factories[0];
+    const findEditFactory = (factories) => {
+      let match = null;
+      for (const id in factories) {
+        if (!Object.hasOwn(factories, id)) continue;
+        const factory = factories[id];
+        if (!sourceOf(factory).includes("edit_message_unsupported_conversation")) continue;
+        if (match) return null;
+        match = factory;
+      }
+      return match;
+    };
+
+    const readEditReferences = (factory) => {
+      if (!factory) return null;
+      const source = sourceOf(factory);
       const marker = source.search(/["']edit_message_unsupported_conversation["']/);
       if (marker < 0) return null;
       // Delimit the edit flow by the busy check and its matching cleanup.
@@ -1630,22 +1667,24 @@
       const tail = source.slice(marker).match(cleanup);
       if (!tail) return null;
       const edit = source.slice(guard.index, marker + tail.index + tail[0].length);
+      const importedRef = (alias, name) => {
+        const id = importedModuleId(source, alias);
+        if (id === null) throw new Error("native edit import changed");
+        return [id, name];
+      };
       const ref = (pattern) => {
         const matches = [...edit.matchAll(new RegExp(pattern, "g"))];
         if (matches.length !== 1) throw new Error("native edit reference changed");
         const [, alias, name] = matches[0];
-        const exports = importedExports(candidate, source, alias);
-        if (!exports) throw new Error("native edit dependency unavailable");
-        return exports[name];
+        return importedRef(alias, name);
       };
       try {
-        const busy = importedExports(candidate, source, busyAlias)?.[busyName];
+        const busy = importedRef(busyAlias, busyName);
         const origin = ref('let [$\\w]+=[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\);if\\("tpp"===');
         const target = ref('let [$\\w]+=[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),\\{conversationId:[$\\w]+,messageId:[$\\w]+\\}\\);if\\(null==');
         const build = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\(\\{message:[$\\w]+\\.message,prompt:');
         const resolveHints = edit.includes("inlineSystemHints:") ?
           ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+\\.message,[$\\w]+\\.get,[$\\w]+\\)') : null;
-        if (edit.includes("inlineSystemHints:") && typeof resolveHints !== "function") return null;
         const attachments = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+\\.message\\.metadata\\)');
         const currentNode = ref('isRequestCurrent:\\(\\)=>[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)===');
         const status = ref('!\\(0,[$\\w]+\\.[$\\w]+\\)\\([$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)\\)');
@@ -1656,20 +1695,43 @@
           `function ${escape(requestName)}\\([^)]*\\)\\{let [$\\w]+=[$\\w]+\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\),[$\\w]+=[$\\w]+\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\);return null==[$\\w]+\\.request\\.current&&null!=[$\\w]+\\?[$\\w]+\\(\\1\\.\\2,[$\\w]+\\):[$\\w]+\\}`,
         ));
         if (!requestBody) return null;
-        const exported = (alias, name) => {
-          return importedExports(candidate, source, alias)?.[name];
-        };
-        const requestState = exported(requestBody[1], requestBody[2]);
-        const savedId = exported(requestBody[3], requestBody[4]);
-        const submitters = new Set(Object.values(candidate.c).map((module) => {
-          try { return module.exports?.submitChatGPTCompletion; } catch { return null; }
-        }).filter((fn) => typeof fn === "function"));
-        if (submitters.size !== 1) return null;
-        const submit = [...submitters][0];
-        if (![busy, origin, target, currentNode, status, workTask, requestState, savedId].every((value) => value && typeof value === "object") ||
-            ![build, attachments, classify, submit].every((value) => typeof value === "function")) return null;
+        const requestState = importedRef(requestBody[1], requestBody[2]);
+        const savedId = importedRef(requestBody[3], requestBody[4]);
+        const submit = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+,\\{isSubmissionCurrent:');
         return { busy, origin, target, build, resolveHints, attachments, currentNode, status, classify, workTask, requestState, savedId, submit };
       } catch { return null; }
+    };
+
+    const bindEditReferences = (cache, references) => {
+      if (!references) return null;
+      const bound = { resolveHints: null };
+      try {
+        for (const key in references) {
+          const ref = references[key];
+          if (!ref) continue;
+          const [id, name] = ref;
+          const value = cache[id]?.exports?.[name];
+          const callable = key === "build" || key === "attachments" || key === "classify" || key === "submit" || key === "resolveHints";
+          if (!value || typeof value !== (callable ? "function" : "object")) return null;
+          bound[key] = value;
+        }
+      } catch { return null; }
+      return bound;
+    };
+    const resolveNative = (candidate) => bindEditReferences(candidate?.c, readEditReferences(findEditFactory(candidate?.m)));
+
+    const discoverNative = () => {
+      if (native || !runtime) return native;
+      const { m: factories, c: cache } = runtime;
+      const factoryCount = Object.keys(factories).length;
+      if (factoryScan?.table.deref() !== factories || factoryScan.count !== factoryCount) {
+        // Keep only module IDs and export names, never module source text.
+        const references = readEditReferences(findEditFactory(factories));
+        factoryScan = { table: new WeakRef(factories), count: factoryCount, references };
+      }
+      native = bindEditReferences(cache, factoryScan.references);
+      if (native) factoryScan = null;
+      return native;
     };
 
     const targetContext = (conversationId, messageId) => {
@@ -1700,7 +1762,6 @@
       left.selectedModel?.thinkingEffort === right.selectedModel?.thinkingEffort;
 
     const performEdit = async (conversationId, messageId, prompt, renderFormat, inlineSystemHints) => {
-      native ??= resolveNative(runtime);
       if (!native) throw new Error("The native Work editor dependencies are unavailable.");
       const context = targetContext(conversationId, messageId);
       const { scope } = context;
@@ -1768,8 +1829,7 @@
         if (input?.isWorkConversation !== true || input.isReadOnly || input.isTemporaryChat ||
             input.sharedConversationLastMessageId != null || typeof input.onEditUserMessage === "function" ||
             typeof input.conversationId !== "string") return Reflect.apply(builder, this, arguments);
-        native ??= resolveNative(runtime);
-        if (!native) {
+        if (!discoverNative()) {
           warn("The native Work edit dependencies could not be identified; editing was left unchanged.");
           return Reflect.apply(builder, this, arguments);
         }
@@ -1840,9 +1900,7 @@
       disabledButtons.delete(button);
     };
     const reconcile = () => {
-      if (!runtime) return;
-      native ??= resolveNative(runtime);
-      if (!native) return;
+      if (!runtime || !native) return;
       const busyButtons = new Set();
       for (const button of document.querySelectorAll("button")) {
         const action = nativeActionFor(button);
@@ -1876,6 +1934,7 @@
       for (const [button, saved] of disabledButtons) restoreButton(button, saved);
       if (registration && registration.candidate.C === registration.register) registration.candidate.C = registration.original;
       registration = null;
+      factoryScan = null;
       callbacks.clear();
     };
 
@@ -1989,12 +2048,13 @@
       if (!context) continue;
       watchConversationActivity(context, currentPass);
       const graph = graphFor(context);
-      const busy = conversationBusy(context);
+      const activity = conversationActivity(context);
+      const busy = activity !== false;
       if (!graph && !busy) continue;
       if (!busy && !hydrateGraph(context, graph)) continue;
       if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) {
         painted++;
-        if (graph?.authoritative && switcher && activityAdapter) {
+        if (graph?.authoritative && switcher && activity !== null) {
           replaceNativeVersions(mountInfo.row, currentPass, { role: "user", messageId: context.messageId });
         }
       }
