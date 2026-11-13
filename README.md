@@ -29,6 +29,10 @@ ChatGPT uses lazy loading for long conversations by default. This extension load
 
 ## Changelog
 
+### 0.7.1
+
+- Fixed full conversation history loading after an AppShell update. The new bugs are a surprise.
+
 ### 0.7.0 Conversation Graph (AppShell)
 
 To open the graph, click the **sidebar icon in the top-right corner of the conversation**.
