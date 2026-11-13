@@ -469,6 +469,15 @@
     conversationKey(left) === conversationKey(right) &&
     (left.scope.node ?? left.scope) === (right.scope.node ?? right.scope);
 
+  const mountedGraphMessage = (owner, messageId) => {
+    for (const element of owner.main.querySelectorAll(`${USER_BUBBLE}, ${ASSISTANT_MESSAGE}`)) {
+      if (!graphElementVisible(element)) continue;
+      const context = readContext(element);
+      if (context?.messageId === messageId && sameGraphOwner(owner, context)) return element;
+    }
+    return null;
+  };
+
   const messageScroller = (element) => {
     const key = getFiber(element);
     for (let fiber = currentFiber(key ? element[key] : null), depth = 0; fiber && depth < 100; fiber = fiber.return, depth++) {
@@ -526,12 +535,12 @@
           catch { /* A mounted message can still be reached directly. */ }
         }
         if (!isCurrent() || done) return finish(false);
-        for (const element of active.main.querySelectorAll(`${USER_BUBBLE}, ${ASSISTANT_MESSAGE}`)) {
-          if (!graphElementVisible(element)) continue;
-          const context = readContext(element);
-          if (context?.messageId !== messageId || !sameGraphOwner(owner, context)) continue;
-          element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
-          if (focusNativeMessage(element)) return finish(true);
+        const element = mountedGraphMessage(active, messageId);
+        if (element) {
+          try {
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+            focusNativeMessage(element);
+          } finally { finish(true); }
         }
       } catch {
         // A rerender can replace the native handle; the next commit retries
@@ -546,9 +555,8 @@
     signal?.addEventListener("abort", cancel, { once: true });
     observer = new MutationObserver(queue);
     observer.observe(owner.main, { childList: true, subtree: true });
-    // This timeout only bounds focus of a virtualized message. Busy state is
-    // always read from native signals, never inferred from this timeout.
-    timeout = setTimeout(() => finish(false), 8000);
+    // A pending native scroll can outlast the arrival of the message.
+    timeout = setTimeout(() => finish(isCurrent() && !!mountedGraphMessage(owner, messageId)), 8000);
     queue();
   });
 
@@ -638,7 +646,7 @@
     let detailHeight = null, detailLineHeight = 0, typographyObserver = null;
     let searchQuery = "", closedLabelKey = null, lastPage = location.pathname + location.hash;
     let searchResultsOpen = false;
-    let panelLifetime = null, viewBuild = null, statusKind = null;
+    let panelLifetime = null, viewBuild = null, statusKind = null, navigationErrorId = null;
     let renderedView = null;
     const renderedCards = new Map(), renderedEdges = new Map();
     const renderedBranchEdges = new Map();
@@ -673,6 +681,7 @@
     const currentOwner = () => sameGraphOwner(owner, activeGraphContext());
     const setStatus = (kind, message = "") => {
       statusKind = kind;
+      if (kind !== "navigation-error") navigationErrorId = null;
       if (status) status.textContent = message;
     };
     const viewportSize = () => ({ width: viewport.clientWidth, height: viewport.clientHeight });
@@ -788,6 +797,7 @@
       expanded = true; detailHeight = height; renderDetail(); requestPaint();
     };
     const select = (id, centre = false) => {
+      if (navigationErrorId && id !== navigationErrorId) setStatus(null);
       selected = id;
       expanded = detailHeight !== null;
       renderDetail();
@@ -796,6 +806,7 @@
     };
     const clearSelection = (restoreFocus = false) => {
       const previous = selected;
+      if (navigationErrorId) setStatus(null);
       selected = null;
       expanded = false;
       renderDetail(); requestPaint();
@@ -1294,8 +1305,10 @@
         setStatus(null);
         try {
           const success = await navigateGraphMessage(requestedOwner, requestedId, lifetime.signal);
-          if (!lifetime.signal.aborted && panelLifetime === lifetime && !success) {
-            setStatus("error", "Unable to open this message. Try again.");
+          if (!lifetime.signal.aborted && panelLifetime === lifetime && !success &&
+              selected === requestedId && currentOwner() && !mountedGraphMessage(owner, requestedId)) {
+            navigationErrorId = requestedId;
+            setStatus("navigation-error", "Unable to open this message. Try again.");
           }
         } finally {
           if (!lifetime.signal.aborted && panelLifetime === lifetime) {
@@ -1463,6 +1476,7 @@
       for (const item of boundLabels) label(item.element, text(item.key), item.content);
       label(search, text("search")); search.placeholder = text("search");
       if (!open) return;
+      if (navigationErrorId && context && mountedGraphMessage(context, navigationErrorId)) setStatus(null);
       const graph = context ? graphFor(context) : null;
       exportControls?.update(!!graph?.authoritative && !navigating && !conversationBusy(context));
       if (!graph) {
