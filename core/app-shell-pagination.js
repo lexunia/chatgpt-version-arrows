@@ -1077,6 +1077,8 @@
   };
 
   const modelCaptionFor = (info, scope) => {
+    if (!info) return "";
+    const { modelSlug } = info;
     const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
     const effortKey = (value) => {
       const effort = text(value);
@@ -1084,6 +1086,7 @@
     };
     const join = (model, label) => !label || model.toLowerCase().endsWith(` ${label.toLowerCase()}`) ||
       model.toLowerCase() === label.toLowerCase() ? model : `${model} ${label}`;
+    const prefix = (title) => /^gpt-/i.test(modelSlug) && /^\d/.test(title) ? `GPT-${title}` : title;
     const effort = effortKey(info.effort);
     let modelTitle = null;
     let effortLabel = null;
@@ -1100,11 +1103,11 @@
             if (option?.slug !== info.modelSlug || effortKey(option.thinkingEffort) !== effort) continue;
             const model = text(option.selectedDisplayVersion);
             const label = text(option.selectedLabel);
-            if (model && label) return join(model, label);
+            if (model && label) return join(prefix(model), label);
           }
         }
         const config = catalog.modelConfigBySlug?.[info.modelSlug];
-        modelTitle ??= text(config?.title)?.replace(/^GPT[-\s]+(?=\d)/i, "");
+        modelTitle ??= text(config?.title);
         const levels = config?.thinkingEfforts;
         const level = Array.isArray(levels) ? levels.find((entry) => effortKey(entry?.thinking_effort) === effort) : null;
         effortLabel ??= text(level?.short_label);
@@ -1113,14 +1116,15 @@
       // A missing or changed catalog must not break the native menu or invent a mode.
     }
     if (!modelTitle) {
-      const match = /^gpt-(\d+(?:[.-]\d+)*)(?:[-.](.+))?$/i.exec(info.modelSlug);
+      const match = /^gpt-(\d+(?:[.-]\d+)*o?)(?:[-.](.+))?$/i.exec(modelSlug);
       if (match) {
-        const version = match[1].replaceAll("-", ".");
+        const version = match[1].replaceAll("-", ".").toLowerCase();
         const name = (match[2] ?? "").replace(/(?:^|-)wm$/i, "").split("-")
           .filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
         modelTitle = join(version, name);
-      } else modelTitle = info.modelSlug;
+      } else modelTitle = modelSlug;
     }
+    modelTitle = prefix(modelTitle);
     if (effortLabel) return join(modelTitle, effortLabel);
     return effort ? `${modelTitle} (${effort})` : modelTitle;
   };
@@ -1160,8 +1164,7 @@
       }
       row.dataset.conversationId = graph.conversationId;
       row.dataset.messageId = context.messageId;
-      const model = modelCaptionFor(info, context.scope);
-      const caption = /^\d/.test(model) ? `GPT-${model}` : model;
+      const caption = modelCaptionFor(info, context.scope);
       if (row.textContent !== caption) row.textContent = caption;
     }
   };
@@ -2164,6 +2167,7 @@
         companion = initialize(Object.freeze({
           USER_BUBBLE, ASSISTANT_MESSAGE, readContext, conversationKey, conversationBusy,
           graphFor, hydrateGraph, requestSwitch, clientText, getFiber, currentFiber, isShell, schedule,
+          modelInfoFor, modelCaptionFor,
           watchActivity: (context) => watchConversationActivity(context, pass),
           isStopped: () => stopped, testMode: TEST_MODE,
         })) ?? null;

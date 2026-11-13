@@ -11,7 +11,7 @@
   addEventListener("chatgpt-version-arrows:connect", (event) => event.detail((api) => {
     const { USER_BUBBLE, ASSISTANT_MESSAGE, readContext, conversationKey, conversationBusy,
       graphFor, hydrateGraph, requestSwitch, clientText, getFiber, currentFiber, isShell, schedule,
-      watchActivity, isStopped } = api;
+      modelInfoFor, modelCaptionFor, watchActivity, isStopped } = api;
     let routeKey = location.pathname + location.hash;
 
   const CARD = Object.freeze({ width: 256, height: 128 });
@@ -63,47 +63,6 @@
       return { iso: date.toISOString(), caption: typeof caption === "string" ? caption : new Intl.DateTimeFormat(locale, options).format(date),
         full: new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "long" }).format(date) };
     } catch { return { iso: date.toISOString(), caption: date.toISOString(), full: date.toISOString() }; }
-  };
-
-  const previewModelCaption = (metadata, scope) => {
-    const text = value => typeof value === "string" && value.trim() ? value.trim() : null;
-    const slug = text(metadata?.model_slug) ?? text(metadata?.resolved_model_slug);
-    if (!slug) return "";
-    const effortKey = value => text(value) === "none" ? null : text(value);
-    const effort = effortKey(metadata.thinking_effort);
-    const join = (model, label) => !label || model.toLowerCase().endsWith(` ${label.toLowerCase()}`) ||
-      model.toLowerCase() === label.toLowerCase() ? model : `${model} ${label}`;
-    const prefix = caption => /^\d/.test(caption) ? `GPT-${caption}` : caption;
-    let title = null, effortLabel = null;
-    try {
-      // Use the owner's already-loaded Chat/Work catalogs; never request another one.
-      const client = scope?.queryClient ?? scope?.node?.queryClient;
-      const queries = client?.getQueryCache?.()?.getAll?.();
-      for (const query of Array.isArray(queries) ? queries : []) {
-        const catalog = query.state?.data;
-        if (!catalog || typeof catalog !== "object") continue;
-        for (const group of [catalog, ...(Array.isArray(catalog.versionOptions) ? catalog.versionOptions : [])]) {
-          for (const option of Array.isArray(group?.options) ? group.options : []) {
-            if (option?.slug !== slug || effortKey(option.thinkingEffort) !== effort) continue;
-            const version = text(option.selectedDisplayVersion), label = text(option.selectedLabel);
-            if (version && label) return prefix(join(version, label));
-          }
-        }
-        const config = catalog.modelConfigBySlug?.[slug];
-        title ??= text(config?.title);
-        const levels = config?.thinkingEfforts;
-        effortLabel ??= text(Array.isArray(levels) ? levels.find(level => effortKey(level?.thinking_effort) === effort)?.short_label : null);
-      }
-    } catch { /* Missing client catalogs must not prevent viewing the message. */ }
-    if (!title) {
-      const match = /^gpt-(\d+(?:[.-]\d+)*)(?:[-.](.+))?$/i.exec(slug);
-      if (match) {
-        const name = (match[2] ?? "").replace(/(?:^|-)wm$/i, "").split("-").filter(Boolean)
-          .map(part => part[0].toUpperCase() + part.slice(1)).join(" ");
-        title = prefix(join(match[1].replaceAll("-", "."), name));
-      } else title = slug;
-    }
-    return effortLabel ? join(title, effortLabel) : effort ? `${title} (${effort})` : title;
   };
 
   // A tidy tree packs neighbouring subtree contours at each depth, instead of
@@ -755,7 +714,7 @@
       const saved = graph?.batchMapping?.[selected]?.message;
       const live = graph?.liveMapping?.[selected]?.message;
       const caption = node.role === "assistant"
-        ? previewModelCaption({ ...saved?.metadata, ...live?.metadata }, owner.scope) : "";
+        ? modelCaptionFor(modelInfoFor({ ...owner, messageId: selected }, graph), owner.scope) : "";
       detailModel.hidden = !caption;
       label(detailModel, caption, true);
       if (detailModel.title !== caption) detailModel.title = caption;
@@ -1568,7 +1527,7 @@
     const controller = createConversationGraph();
     if (api.testMode) globalThis.__chatgptConversationGraphTest = {
       graphMessageText, graphOverviewGeometry, graphOverviewTarget, createMessageGraphView, createViewBuild, graphViewportItems, currentBranchPaths, activeGraphContext,
-      messageScroller, navigateGraphMessage, focusGraphMessage, previewModelCaption,
+      messageScroller, navigateGraphMessage, focusGraphMessage,
       reconcileGraph: controller.reconcile,
     };
     return {
