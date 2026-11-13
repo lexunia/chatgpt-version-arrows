@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 6";
+  const VERSION = "0.7.1 Beta 7";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1615,10 +1615,21 @@
       if (factories.length !== 1) return null;
       const source = factories[0];
       const marker = source.search(/["']edit_message_unsupported_conversation["']/);
-      const start = source.lastIndexOf("async function ", marker);
-      const tail = source.slice(start).match(/\}finally\{[$\w]+\.set\(([$\w]+)\.([$\w]+),[$\w]+,!1\)\}\}/);
-      if (start < 0 || !tail) return null;
-      const edit = source.slice(start, start + tail.index + tail[0].length);
+      if (marker < 0) return null;
+      // Delimit the edit flow by the busy check and its matching cleanup.
+      // The handler can be declared, inlined or compiled as an arrow.
+      const guards = [...source.slice(0, marker).matchAll(
+        /\bif\(([$\w]+)\.get\(([$\w]+)\.([$\w]+),([$\w]+)\)\)\s*throw new [$\w]+\.[$\w]+\(["']edit_message_busy["']/g,
+      )];
+      const guard = guards.at(-1);
+      if (!guard) return null;
+      const [, scopeName, busyAlias, busyName, idName] = guard;
+      const cleanup = new RegExp(
+        `\\}\\s*finally\\s*\\{\\s*${escape(scopeName)}\\.set\\(${escape(busyAlias)}\\.${escape(busyName)},${escape(idName)},(?:!1|false)\\);?\\s*\\}`,
+      );
+      const tail = source.slice(marker).match(cleanup);
+      if (!tail) return null;
+      const edit = source.slice(guard.index, marker + tail.index + tail[0].length);
       const ref = (pattern) => {
         const matches = [...edit.matchAll(new RegExp(pattern, "g"))];
         if (matches.length !== 1) throw new Error("native edit reference changed");
@@ -1628,10 +1639,13 @@
         return exports[name];
       };
       try {
-        const busy = ref('if\\([$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)\\)throw new [$\\w]+\\.[$\\w]+\\("edit_message_busy"');
+        const busy = importedExports(candidate, source, busyAlias)?.[busyName];
         const origin = ref('let [$\\w]+=[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\);if\\("tpp"===');
         const target = ref('let [$\\w]+=[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),\\{conversationId:[$\\w]+,messageId:[$\\w]+\\}\\);if\\(null==');
         const build = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\(\\{message:[$\\w]+\\.message,prompt:');
+        const resolveHints = edit.includes("inlineSystemHints:") ?
+          ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+\\.message,[$\\w]+\\.get,[$\\w]+\\)') : null;
+        if (edit.includes("inlineSystemHints:") && typeof resolveHints !== "function") return null;
         const attachments = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+\\.message\\.metadata\\)');
         const currentNode = ref('isRequestCurrent:\\(\\)=>[$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)===');
         const status = ref('!\\(0,[$\\w]+\\.[$\\w]+\\)\\([$\\w]+\\.get\\(([$\\w]+)\\.([$\\w]+),[$\\w]+\\)\\)');
@@ -1654,7 +1668,7 @@
         const submit = [...submitters][0];
         if (![busy, origin, target, currentNode, status, workTask, requestState, savedId].every((value) => value && typeof value === "object") ||
             ![build, attachments, classify, submit].every((value) => typeof value === "function")) return null;
-        return { busy, origin, target, build, attachments, currentNode, status, classify, workTask, requestState, savedId, submit };
+        return { busy, origin, target, build, resolveHints, attachments, currentNode, status, classify, workTask, requestState, savedId, submit };
       } catch { return null; }
     };
 
@@ -1677,14 +1691,15 @@
       if (!pageId || services.conversationKey(context) !== pageId) throw new Error("The active conversation changed.");
       return context;
     };
+    const sameHints = (left, right) => Array.isArray(left) && left.length === right.length &&
+      left.every((hint, index) => hint === right[index]);
+
     const sameTarget = (left, right) => left && left.message === right.message &&
       left.parentMessageId === right.parentMessageId &&
       left.selectedModel?.slug === right.selectedModel?.slug &&
-      left.selectedModel?.thinkingEffort === right.selectedModel?.thinkingEffort &&
-      Array.isArray(left.systemHints) && left.systemHints.length === right.systemHints.length &&
-      left.systemHints.every((hint, index) => hint === right.systemHints[index]);
+      left.selectedModel?.thinkingEffort === right.selectedModel?.thinkingEffort;
 
-    const performEdit = async (conversationId, messageId, prompt, renderFormat) => {
+    const performEdit = async (conversationId, messageId, prompt, renderFormat, inlineSystemHints) => {
       native ??= resolveNative(runtime);
       if (!native) throw new Error("The native Work editor dependencies are unavailable.");
       const context = targetContext(conversationId, messageId);
@@ -1697,7 +1712,12 @@
         throw new Error("The user message could not be edited.");
       }
       const text = prompt.trim();
-      const completion = native.build({ message: target.message, prompt: text, renderFormat, systemHints: target.systemHints });
+      const hintsFor = (value) => native.resolveHints ?
+        native.resolveHints(value.message, scope.get, inlineSystemHints) : value.systemHints;
+      const systemHints = hintsFor(target);
+      if (!Array.isArray(systemHints)) throw new Error("The edited message's system hints are unavailable.");
+      const completion = native.build({ message: target.message, prompt: text, renderFormat, systemHints,
+        ...(native.resolveHints ? { inlineSystemHints } : {}) });
       const attachments = native.attachments(completion.message.metadata);
       const content = completion.message.content;
       const hasMedia = content.content_type === "multimodal_text" && content.parts.some((part) => typeof part !== "string");
@@ -1712,9 +1732,11 @@
       const isCurrent = () => {
         try {
           const fresh = targetContext(conversationId, messageId);
+          const currentTarget = scope.get(native.target, key);
           return (fresh.scope.node ?? fresh.scope) === (scope.node ?? scope) &&
             scope.get(native.origin, conversationId) === "tpp" &&
-            sessionFor().request.current === request && sameTarget(scope.get(native.target, key), target) &&
+            sessionFor().request.current === request && sameTarget(currentTarget, target) &&
+            sameHints(hintsFor(currentTarget), systemHints) &&
             !native.classify(scope.get(native.status, conversationId));
         } catch { return false; }
       };
@@ -1731,7 +1753,7 @@
           isRequestCurrent: () => scope.get(native.currentNode, conversationId) === completion.message.id,
           attachments, conversationId, isTemporaryChat: false,
           model: target.selectedModel.slug, parentMessageId: target.parentMessageId,
-          prompt: text, systemHints: target.systemHints, thinkingEffort: target.selectedModel.thinkingEffort,
+          prompt: text, systemHints, thinkingEffort: target.selectedModel.thinkingEffort,
           userCompletionMessages: completion,
         });
       } finally {
@@ -1753,7 +1775,7 @@
         }
         const id = input.conversationId;
         if (!callbacks.has(id)) {
-          callbacks.set(id, (messageId, prompt, format) => performEdit(id, messageId, prompt, format));
+          callbacks.set(id, (messageId, prompt, format, hints) => performEdit(id, messageId, prompt, format, hints));
           if (callbacks.size > 4) callbacks.delete(callbacks.keys().next().value);
         }
         return Reflect.apply(builder, this, [{ ...input, onEditUserMessage: callbacks.get(id) }]);
