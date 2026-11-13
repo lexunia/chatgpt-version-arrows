@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 9";
+  const VERSION = "0.7.1 Beta 10";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -977,7 +977,7 @@
     return true;
   };
 
-  const paintUserPagination = (bubble, context, graph, mountInfo, currentPass, busy) => {
+  const paintUserPagination = (bubble, context, graph, mountInfo, currentPass, busy, hydrated) => {
     const ids = userVariants(graph, context.messageId);
     const index = ids.indexOf(context.messageId);
     const { mount } = mountInfo;
@@ -1018,8 +1018,8 @@
     updateControlLabels(controls, bubble);
     const caption = `${index + 1}/${ids.length}`;
     if (counter.textContent !== caption) counter.textContent = caption;
-    previous.disabled = busy || index === 0;
-    next.disabled = busy || index === ids.length - 1;
+    previous.disabled = busy || !hydrated || index === 0;
+    next.disabled = busy || !hydrated || index === ids.length - 1;
     controls.setAttribute("aria-busy", String(busy));
     const descriptor = conversationErrors.get(graph.conversationId);
     const error = descriptor ? clientText(bubble, descriptor) : "";
@@ -1206,7 +1206,7 @@
     await requestSwitch(context, messageId, target, message);
   };
 
-  const paintAssistantPagination = (message, context, graph, row, currentPass, activity) => {
+  const paintAssistantPagination = (message, context, graph, row, currentPass, activity, hydrated) => {
     const busy = activity !== false;
     const messageId = message.getAttribute("data-chatgpt-selection-message-id");
     if (!messageId) return false;
@@ -1218,13 +1218,13 @@
       blockNativeAssistantButtons(native, message, activity === true, currentPass);
       // A partial or changing graph cannot establish that the native pair is spurious.
       if (activity !== true || !graph?.authoritative) {
-        const phantom = activity === false && !!graph?.authoritative && ids.length < 2;
+        const phantom = hydrated && !!graph?.authoritative && ids.length < 2;
         if (phantom !== native.hasAttribute("data-batch-pagination-suppressed")) {
           native.toggleAttribute("data-batch-pagination-suppressed", phantom);
           if (diagnostics) record(phantom ? "phantom-assistant-pagination-suppressed" : "assistant-pagination-restored", { messageId });
         }
       }
-      if (graph?.authoritative && activity !== null && ids.length >= 2 && !native.hasAttribute("data-batch-pagination-suppressed")) {
+      if (graph?.authoritative && (hydrated || activity === true) && ids.length >= 2 && !native.hasAttribute("data-batch-pagination-suppressed")) {
         replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
       }
       controls?.remove();
@@ -1270,8 +1270,8 @@
     updateControlLabels(controls, message, true);
     const caption = `${index + 1}/${ids.length}`;
     if (counter.textContent !== caption) counter.textContent = caption;
-    previous.disabled = busy || index === 0;
-    next.disabled = busy || index === ids.length - 1;
+    previous.disabled = busy || !hydrated || index === 0;
+    next.disabled = busy || !hydrated || index === ids.length - 1;
     controls.setAttribute("aria-busy", String(busy));
     const descriptor = conversationErrors.get(graph.conversationId);
     const error = descriptor ? clientText(message, descriptor) : "";
@@ -1292,14 +1292,11 @@
       const activity = conversationActivity(context);
       if (!graph && activity === false) continue;
       const row = assistantActionRowFor(message);
-      if (activity === false && !hydrateGraph(context, graph)) {
-        nativeAssistantPaginationFor(row)?.removeAttribute("data-batch-pagination-suppressed");
-        continue;
-      }
+      const hydrated = activity === false && hydrateGraph(context, graph);
       if (!row) continue;
-      if (paintAssistantPagination(message, context, graph, row, currentPass, activity)) {
+      if (paintAssistantPagination(message, context, graph, row, currentPass, activity, hydrated)) {
         painted++;
-        if (graph?.authoritative && switcher && activity !== null) {
+        if (graph?.authoritative && switcher && (hydrated || activity === true)) {
           replaceNativeVersions(row, currentPass, { role: "assistant", messageId });
         }
       }
@@ -2051,10 +2048,11 @@
       const activity = conversationActivity(context);
       const busy = activity !== false;
       if (!graph && !busy) continue;
-      if (!busy && !hydrateGraph(context, graph)) continue;
-      if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy)) {
+      const hydrated = !busy && hydrateGraph(context, graph);
+      // Known versions remain visible even when AppScope cannot accept the graph.
+      if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy, hydrated)) {
         painted++;
-        if (graph?.authoritative && switcher && activity !== null) {
+        if (graph?.authoritative && switcher && (hydrated || activity === true)) {
           replaceNativeVersions(mountInfo.row, currentPass, { role: "user", messageId: context.messageId });
         }
       }
