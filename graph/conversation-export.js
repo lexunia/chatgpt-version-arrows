@@ -119,7 +119,7 @@
   };
 
   const createExportControls = ({ parent, read, api }) => {
-    let disposed = false, running = false, available = false, noticeTimer = null, focus = null;
+    let disposed = false, running = false, available = false, focus = null;
     const root = document.createElement("div"); root.className = "version-graph-export"; parent.append(root);
     const trigger = document.createElement("button"); trigger.type = "button";
     trigger.className = "version-graph-button version-graph-export-trigger";
@@ -154,7 +154,6 @@
       hideMenu();
       if (menuHadFocus) trigger.focus({ preventScroll: true });
       running = true;
-      clearTimeout(noticeTimer);
       controlsState();
       notice.hidden = false; notice.textContent = "Preparing export...";
       try {
@@ -184,8 +183,7 @@
         const url = URL.createObjectURL(result.blob), link = document.createElement("a");
         link.href = url; link.download = result.filename;
         try { link.click(); } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
-        notice.textContent = "Download started.";
-        noticeTimer = setTimeout(() => { notice.hidden = true; }, 3000);
+        notice.hidden = true;
       } catch (error) {
         if (!disposed) notice.textContent = error.exportMessage ?? "Unable to prepare export. Please try again.";
       } finally {
@@ -220,7 +218,6 @@
         disposed = true;
         focus?.cancel();
         hideMenu();
-        clearTimeout(noticeTimer);
         root.remove();
       },
     };
