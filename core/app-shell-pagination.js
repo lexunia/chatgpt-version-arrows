@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 10";
+  const VERSION = "0.7.1 Beta 11";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1104,7 +1104,7 @@
           }
         }
         const config = catalog.modelConfigBySlug?.[info.modelSlug];
-        modelTitle ??= text(config?.title)?.replace(/^GPT[-\s]?/i, "");
+        modelTitle ??= text(config?.title)?.replace(/^GPT[-\s]+(?=\d)/i, "");
         const levels = config?.thinkingEfforts;
         const level = Array.isArray(levels) ? levels.find((entry) => effortKey(entry?.thinking_effort) === effort) : null;
         effortLabel ??= text(level?.short_label);
@@ -1160,7 +1160,8 @@
       }
       row.dataset.conversationId = graph.conversationId;
       row.dataset.messageId = context.messageId;
-      const caption = `GPT-${modelCaptionFor(info, context.scope).replace(/^GPT[-\s]+/i, "")}`;
+      const model = modelCaptionFor(info, context.scope);
+      const caption = /^\d/.test(model) ? `GPT-${model}` : model;
       if (row.textContent !== caption) row.textContent = caption;
     }
   };
