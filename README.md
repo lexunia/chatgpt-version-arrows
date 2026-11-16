@@ -29,9 +29,13 @@ ChatGPT uses lazy loading for long conversations by default. This extension load
 
 ## Changelog
 
+### 0.7.2
+
+- Version arrows under user prompts now follow the same visibility rules as ChatGPT’s built-in buttons.
+
 ### 0.7.1
 
-- Fixed full conversation history loading after an AppShell update. The new bugs are a surprise.
+- Fixed full conversation history loading after an AppShell update.
 
 ### 0.7.0 Conversation Graph (AppShell)
 
