@@ -3,7 +3,7 @@
   white-space: nowrap;
 }
 
-/* User controls sit outside the native assistant toolbar's sizing scope. */
+/* Match the native browser button dimensions for extension-rendered arrows. */
 html[data-codex-window-type="browser"] [data-batch-edit-pagination] button {
   height: calc(var(--spacing) * 8);
   width: calc(var(--spacing) * 8);

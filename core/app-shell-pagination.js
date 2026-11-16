@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.1 Beta 16";
+  const VERSION = "0.7.2 Beta 1";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -847,12 +847,12 @@
     }
   };
 
-  const findMount = (bubble) => {
+  const findUserActionRow = (bubble) => {
     let element = bubble.parentElement;
     for (let depth = 0; element && depth < 9; depth++, element = element.parentElement) {
       if (element.querySelectorAll(USER_BUBBLE).length !== 1) continue;
       const rows = element.querySelectorAll(".turn-action-controls");
-      if (rows.length === 1) return { mount: rows[0].parentElement, row: rows[0] };
+      if (rows.length === 1) return rows[0];
     }
     return null;
   };
@@ -977,11 +977,10 @@
     return true;
   };
 
-  const paintUserPagination = (bubble, context, graph, mountInfo, currentPass, busy, hydrated) => {
+  const paintUserPagination = (bubble, context, graph, row, currentPass, busy, hydrated) => {
     const ids = userVariants(graph, context.messageId);
     const index = ids.indexOf(context.messageId);
-    const { mount } = mountInfo;
-    let controls = mount.querySelector(CONTROLS);
+    let controls = row.querySelector(CONTROLS);
     if (ids.length < 2 || index < 0) {
       if (retainBusyControls(controls, bubble, context, currentPass, busy)) return true;
       controls?.remove();
@@ -1013,7 +1012,8 @@
     controls.dataset.pass = String(currentPass);
     controls.dataset.conversationId = graph.conversationId;
     controls.dataset.messageId = context.messageId;
-    if (controls.parentElement !== mount) mount.append(controls);
+    // Share the client's visibility and layout rules for this prompt's actions.
+    if (row.lastElementChild !== controls) row.append(controls);
     const [previous, counter, next] = controls.children;
     updateControlLabels(controls, bubble);
     const caption = `${index + 1}/${ids.length}`;
@@ -2043,8 +2043,8 @@
     const bubbles = [...document.querySelectorAll(USER_BUBBLE)].filter(activeWorkspace);
     let painted = 0;
     for (const bubble of bubbles) {
-      const mountInfo = findMount(bubble);
-      if (!mountInfo) continue;
+      const row = findUserActionRow(bubble);
+      if (!row) continue;
       const context = readContext(bubble);
       if (!context) continue;
       watchConversationActivity(context, currentPass);
@@ -2054,10 +2054,10 @@
       if (!graph && !busy) continue;
       const hydrated = !busy && hydrateGraph(context, graph);
       // Known versions remain visible even when AppScope cannot accept the graph.
-      if (paintUserPagination(bubble, context, graph, mountInfo, currentPass, busy, hydrated)) {
+      if (paintUserPagination(bubble, context, graph, row, currentPass, busy, hydrated)) {
         painted++;
         if (graph?.authoritative && switcher && (hydrated || activity === true)) {
-          replaceNativeVersions(mountInfo.row, currentPass, { role: "user", messageId: context.messageId });
+          replaceNativeVersions(row, currentPass, { role: "user", messageId: context.messageId });
         }
       }
     }
