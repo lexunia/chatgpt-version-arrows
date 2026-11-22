@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.2 Beta 1";
+  const VERSION = "0.7.2 Beta 2";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1698,7 +1698,7 @@
         if (!requestBody) return null;
         const requestState = importedRef(requestBody[1], requestBody[2]);
         const savedId = importedRef(requestBody[3], requestBody[4]);
-        const submit = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+,\\{isSubmissionCurrent:');
+        const submit = ref('\\(0,([$\\w]+)\\.([$\\w]+)\\)\\([$\\w]+,\\{(?=[^{}]*\\bisSubmissionCurrent:)(?=[^{}]*\\buserCompletionMessages:)');
         return { busy, origin, target, build, resolveHints, attachments, currentNode, status, classify, workTask, requestState, savedId, submit };
       } catch { return null; }
     };
@@ -1811,6 +1811,7 @@
         }
         if (!isCurrent()) throw new Error("The edited message or active response changed.");
         await native.submit(scope, {
+          userInitiated: true,
           isSubmissionCurrent: isCurrent,
           isRequestCurrent: () => scope.get(native.currentNode, conversationId) === completion.message.id,
           attachments, conversationId, isTemporaryChat: false,
