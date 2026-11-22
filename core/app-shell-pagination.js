@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.2 Beta 2";
+  const VERSION = "0.7.2 Beta 3";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1610,6 +1610,7 @@
   // Work prompt editing shares this adapter's ownership and busy checks.
   const createWorkEditor = () => {
     const wrappedFactories = new WeakSet();
+    const originalFactories = new WeakMap();
     const builders = new WeakMap();
     const callbacks = new Map();
     const disabledButtons = new Map();
@@ -1625,8 +1626,10 @@
     let registration = null;
     let native = null;
     let factoryScan = null;
+    let actionsInstalled = false;
+    let messageUiInstalled = false;
 
-    const sourceOf = (fn) => typeof fn === "function" ? Function.prototype.toString.call(fn) : "";
+    const sourceOf = (fn) => typeof fn === "function" ? Function.prototype.toString.call(originalFactories.get(fn) ?? fn) : "";
     const warn = (message) => {
       if (warnings.has(message)) return;
       warnings.add(message);
@@ -1858,27 +1861,90 @@
         return factory(module, exports, localRequire);
       };
       wrappedFactories.add(wrapped);
+      originalFactories.set(wrapped, factory);
+      return wrapped;
+    };
+    const wrapMessageUiFactory = (factory) => {
+      // Only this page module receives the JSX facade. Other modules keep their
+      // original runtime; no message, draft or Work-origin state is rewritten.
+      const wrapped = function workMessageUiFactory(module, exports, require) {
+        const imports = new WeakMap();
+        const messageComponents = new WeakMap();
+        let editing = null;
+        const restoreEdit = (props) => editing && props?.message === editing.item.message &&
+          props.turnId === editing.turnId && Object.hasOwn(props, "onEditMessage") && props.onEditMessage == null &&
+          props.followupEdit == null ? { ...props, onEditMessage: editing.onEditMessage } : props;
+        const wrapComponent = (component) => {
+          if (messageComponents.has(component)) return messageComponents.get(component);
+          const wrapped = function workUserMessage(props) {
+            const previous = editing;
+            editing = props.isWorkConversation === true && !props.isReadOnly && !props.isTemporaryChat &&
+              props.item?.type === "user-message" && !props.item.isToolOutput &&
+              callbacks.has(props.conversationId) && typeof props.onEditMessage === "function" ? props : null;
+            try { return Reflect.apply(component, this, arguments); }
+            finally { editing = previous; }
+          };
+          messageComponents.set(component, wrapped);
+          return wrapped;
+        };
+        const wrapJsx = (jsx) => function workMessageElement(type, props, key) {
+          // The page has both a direct bubble and a presentation wrapper that
+          // forwards userMessageProps. Preserve the callback at either boundary.
+          let next = restoreEdit(props);
+          if (next?.userMessageProps) {
+            const userMessageProps = restoreEdit(next.userMessageProps);
+            if (userMessageProps !== next.userMessageProps) next = { ...next, userMessageProps };
+          }
+          if (typeof type === "function" && props?.isWorkConversation === true && props.item?.type === "user-message" &&
+              Object.hasOwn(props, "isWorkConversation") && Object.hasOwn(props, "onEditMessage")) type = wrapComponent(type);
+          return Reflect.apply(jsx, this, [type, next, key]);
+        };
+        const localRequire = function () {
+          const value = Reflect.apply(require, this, arguments);
+          if (!value || typeof value.jsx !== "function" || typeof value.jsxs !== "function") return value;
+          if (!imports.has(value)) imports.set(value, { ...value, jsx: wrapJsx(value.jsx), jsxs: wrapJsx(value.jsxs) });
+          return imports.get(value);
+        };
+        Object.assign(localRequire, require);
+        return factory(module, exports, localRequire);
+      };
+      wrappedFactories.add(wrapped);
+      originalFactories.set(wrapped, factory);
       return wrapped;
     };
     const installFactories = (factories, cache) => {
-      const matches = Object.entries(factories ?? {}).filter(([, factory]) =>
+      const entries = Object.entries(factories ?? {});
+      const pages = entries.filter(([, factory]) => sourceOf(factory).includes("edit_message_unsupported_conversation"));
+      if (!messageUiInstalled && pages.length === 1) {
+        const [id, factory] = pages[0];
+        if (sourceOf(factory).includes("work-followup:")) {
+          if (cache?.[id]) warn("The native Work message UI is already initialized; reload with the updated extension.");
+          else factories[id] = wrapMessageUiFactory(factory);
+        }
+        messageUiInstalled = true;
+      }
+      const matches = entries.filter(([, factory]) =>
         !wrappedFactories.has(factory) && isBuilder(sourceOf(factory)));
-      if (!matches.length) return false;
+      if (!matches.length) return actionsInstalled;
       if (matches.length !== 1 || cache?.[matches[0][0]]) {
         warn("The native action builder is ambiguous or already initialized; reload with the updated extension.");
+        actionsInstalled = true;
         return true;
       }
       const [id, factory] = matches[0];
       factories[id] = wrapFactory(factory);
+      actionsInstalled = true;
       return true;
     };
     const attachRuntime = (candidate) => {
       if (runtime || !candidate?.m || !candidate?.c || typeof candidate.C !== "function") return;
       runtime = candidate;
-      if (installFactories(candidate.m, candidate.c)) return;
+      installFactories(candidate.m, candidate.c);
+      if (actionsInstalled && messageUiInstalled) return;
       const original = candidate.C;
       const register = function registerWorkActions(chunk) {
-        if (registration && installFactories(chunk?.__webpack_modules__, candidate.c)) {
+        if (registration) installFactories(chunk?.__webpack_modules__, candidate.c);
+        if (registration && actionsInstalled && messageUiInstalled) {
           registration = null;
           if (candidate.C === register) candidate.C = original;
         }
