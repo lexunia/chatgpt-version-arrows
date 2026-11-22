@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.7.2 Beta 3";
+  const VERSION = "0.7.2 Beta 4";
   // Development diagnostics are disabled in release builds. Set DEBUG to true
   // locally when a live AppShell investigation needs an in-memory event log.
   const DEBUG = false;
@@ -1865,7 +1865,7 @@
       return wrapped;
     };
     const wrapMessageUiFactory = (factory) => {
-      // Only this page module receives the JSX facade. Other modules keep their
+      // Only this message UI module receives the JSX facade. Other modules keep their
       // original runtime; no message, draft or Work-origin state is rewritten.
       const wrapped = function workMessageUiFactory(module, exports, require) {
         const imports = new WeakMap();
@@ -1914,13 +1914,14 @@
     };
     const installFactories = (factories, cache) => {
       const entries = Object.entries(factories ?? {});
-      const pages = entries.filter(([, factory]) => sourceOf(factory).includes("edit_message_unsupported_conversation"));
-      if (!messageUiInstalled && pages.length === 1) {
-        const [id, factory] = pages[0];
-        if (sourceOf(factory).includes("work-followup:")) {
-          if (cache?.[id]) warn("The native Work message UI is already initialized; reload with the updated extension.");
-          else factories[id] = wrapMessageUiFactory(factory);
-        }
+      const messages = entries.filter(([, factory]) => {
+        const source = sourceOf(factory);
+        return source.includes("work-followup:") && source.includes("userMessageProps:");
+      });
+      if (!messageUiInstalled && messages.length === 1) {
+        const [id, factory] = messages[0];
+        if (cache?.[id]) warn("The native Work message UI is already initialized; reload with the updated extension.");
+        else factories[id] = wrapMessageUiFactory(factory);
         messageUiInstalled = true;
       }
       const matches = entries.filter(([, factory]) =>
